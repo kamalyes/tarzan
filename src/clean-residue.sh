@@ -114,6 +114,8 @@ function rmove_kube_conf() {
     rm -rf /etc/systemd/system/kubelet.service.d
     rm -rf /etc/systemd/system/kubelet.service
     rm -rf /etc/systemd/system/multi-user.target.wants/kubelet.service
+    df -HT|grep '/var/lib/kubelet/pods'
+    umount $(df -HT | grep '/var/lib/kubelet/pods' | awk '{print $7}')
     rm -rf /var/lib/kubelet
     rm -rf /usr/libexec/kubernetes/kubelet-plugins
     rm -rf /usr/bin/kube*
