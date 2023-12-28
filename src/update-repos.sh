@@ -1,7 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
+source ./common.sh
+
 NEXUS_URL="http://119.29.213.183:18081"
 
-echo -e "开始更新CentoSBase Repo地址为私有="
+log "开始更新CentoSBase Repo地址为私有="
 mkdir /etc/yum.repos.d/bak && mv /etc/yum.repos.d/*.repo /etc/yum.repos.d/bak
 cat <<EOF | tee /etc/yum.repos.d/Centos-7.repo
 [base]
@@ -83,4 +85,4 @@ gpgcheck=1
 EOF
 # 添加docker-ce软件源信息
 yum clean all && yum makecache
-echo -e "更新CentoSBase Repo地址成功="
+log "更新CentoSBase Repo地址成功"

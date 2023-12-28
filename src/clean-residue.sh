@@ -1,36 +1,31 @@
-#!/bin/bash
-action=$1
-__current_dir=$(
-    cd "$(dirname "$0")"
-    pwd
-)
+#!/usr/bin/env bash
+source ./common.sh
 
-function log() {
-    message="[Tarzan Log]: $1 "
-    echo -e "\033[32m## ${message} \033[0m\n" 2>&1 | tee -a ${__current_dir}/install.log
-}
+action=$1
 
 function del_kube_node() {
-    del_kube_node_prompt="删除K8s群集中的所有Node节点"
-    read -p "是否确认${del_kube_node_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-    y | Y) 
-    log "检查kubelet服务是否正常运行"
-    kubelet --version 1>/dev/null 2>/dev/null
-    if [ $? != 0 ]; then
-        systemctl status kubelet
-        log "kubelet 未正常安装, 跳过${del_kube_node_prompt}"
-    else
-        kubectl delete node --all
+    kubectl get nodes |grep -q `hostname` 1>&2 >/dev/null
+    if [ $? -eq 0 ];then
+        del_kube_node_prompt="删除K8s群集中的所有Node节点"
+        read -p "是否确认${del_kube_node_prompt}? [n/y]" __choice </dev/tty
+        case "$__choice" in
+        y | Y) 
+        log "检查kubelet服务是否正常运行"
+        kubelet --version 1>/dev/null 2>/dev/null
+        if [ $? != 0 ]; then
+            log "kubelet 未正常安装, 跳过${del_kube_node_prompt}"
+        else
+            kubectl delete node --all
+        fi
+        ;;
+        n | N)
+            log "跳过${del_kube_node_prompt}"
+        ;;
+        *)
+            log "跳过${del_kube_node_prompt}"
+        ;;
+        esac
     fi
-    ;;
-    n | N)
-        log "跳过${del_kube_node_prompt}" &
-        ;;
-    *)
-        log "跳过${del_kube_node_prompt}" &
-        ;;
-    esac
 }
 
 function reset_kube() {
@@ -48,11 +43,11 @@ function reset_kube() {
     fi
     ;;
     n | N)
-        log "跳过${reset_kube_prompt}..." &
-        ;;
+        log "跳过${reset_kube_prompt}"
+    ;;
     *)
-        log "跳过${reset_kube_prompt}..." &
-        ;;
+        log "跳过${reset_kube_prompt}"
+    ;;
     esac
 }
 
@@ -73,11 +68,11 @@ function del_flannel() {
     log "${del_flannel_prompt} OK"
     ;;
     n | N)
-        log "跳过${del_flannel_prompt}..." &
-        ;;
+        log "跳过${del_flannel_prompt}"
+    ;;
     *)
-        log "跳过${del_flannel_prompt}..." &
-        ;;
+        log "跳过${del_flannel_prompt}"
+    ;;
     esac
 }
 
@@ -99,11 +94,11 @@ function delete_dkube() {
     log "${delete_dkube_prompt} OK"
     ;;
     n | N)
-        log "跳过${delete_dkube_prompt}..." &
-        ;;
+        log "跳过${delete_dkube_prompt}"
+    ;;
     *)
-        log "跳过${delete_dkube_prompt}..." &
-        ;;
+        log "跳过${delete_dkube_prompt}"
+    ;;
     esac
 }
 
@@ -128,11 +123,11 @@ function rmove_kube_conf() {
     log "${rmove_kube_conf_prompt} OK"
     ;;
     n | N)
-        log "跳过${rmove_kube_conf_prompt}" &
-        ;;
+        log "跳过${rmove_kube_conf_prompt}"
+    ;;
     *)
-        log "跳过${rmove_kube_conf_prompt}" &
-        ;;
+        log "跳过${rmove_kube_conf_prompt}"
+    ;;
     esac
 }
 
