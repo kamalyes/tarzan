@@ -78,18 +78,13 @@ function dashboard() {
     if [ "$1" ];then
       DASHBOARD_VERSION=$1
     fi
+    kubectl create ns kubernetes-dashboard
     kubectl apply -f addons/kube-dashboard/$DASHBOARD_VERSION/dashboard-init.yaml
-    kubectl get all -n kube-dashboard
-    check_pod_status kube-dashboard
-    kubectl create serviceaccount dashboard-admin -n kube-dashboard
-    kubectl create clusterrolebinding dashboard-admin-rb --clusterrole=cluster-admin --serviceaccount=kube-dashboard:dashboard-admin
-    ADMIN_SECRET=$(kubectl get secrets -n kube-dashboard | grep dashboard-admin | awk '{print $1}')
-    kubectl -n kube-dashboard describe secret $(kubectl -n kube-dashboard get secret | grep dashboard-admin | awk '{print $1}')
-    DASHBOARD_LOGIN_TOKEN=$(kubectl describe secret -n kube-dashboard ${ADMIN_SECRET} | grep -E '^token' | awk '{print $2}')
-    echo ${DASHBOARD_LOGIN_TOKEN} > kube-dashboard-token.txt
-    kubectl create -f dashboard-svc-account.yaml
+    kubectl get all -n kubernetes-dashboard
+    check_pod_status kubernetes-dashboard
+    kubectl create -f addons/kube-dashboard/$DASHBOARD_VERSION/dashboard-svc-account.yaml
+    kubectl create token dashboard-admin -n kubernetes-dashboard
     log "安装完成,浏览方式: 用firefox 浏览 https://nodes-ip:30001 (要用命令查看pod-dashboard所对应的node节点),跳出不安全提示,然后高级点添加网站到安全例外"
-    log "登录token见 安装目录下token.txt "
 }
 
 function inginx() {
@@ -151,3 +146,4 @@ function main_entrance() {
   esac
 }
 main_entrance $@
+
