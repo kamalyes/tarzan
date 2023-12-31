@@ -1,0 +1,304 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: logtail-ds
+  namespace: {{ .Values.NameSpace }}
+  labels:
+    k8s-app: logtail-ds
+spec:
+  selector:
+    matchLabels:
+      k8s-app: logtail-ds
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 30%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        k8s-app: logtail-ds
+        kubernetes.io/cluster-service: "true"
+        version: {{ .Values.Version }}
+    spec:
+      serviceAccountName: logtail-ds
+{{ if eq .Values.SlsMonitoring true }}
+      hostPID: true
+      initContainers:
+        - name: deps
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c", "cp -r /etc/ilogtail/agent-install/* /share"]
+          volumeMounts:
+            - mountPath: /share
+              name: dependencies
+{{ if eq .Values.Net "Internet" }}
+          image: registry.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Deps.Image.Tag }}
+{{ else }}
+          image: registry-vpc.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Deps.Image.Tag }}
+{{ end }}
+{{end}}
+      containers:
+      - name: logtail
+        imagePullPolicy: Always
+{{ if eq .Values.Net "Internet" }}
+        image: registry.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Logtail.Image.Tag }}
+{{ else }}
+        image: registry-vpc.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Logtail.Image.Tag }}
+{{ end }}          
+        resources:
+          limits:
+            cpu: {{.Values.Logtail.DS.Limit.CPU}}
+            memory: {{.Values.Logtail.DS.Limit.Memory}}
+          requests:
+            cpu: {{.Values.Logtail.DS.Request.CPU}}
+            memory: {{.Values.Logtail.DS.Request.Memory}}
+        livenessProbe:
+          httpGet:
+            path: /liveness
+            port: 7953
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 60
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /liveness
+            port: 7953
+            scheme: HTTP
+          initialDelaySeconds: 35
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 1
+        securityContext:
+          privileged: {{.Values.SlsMonitoring}}
+          allowPrivilegeEscalation: {{.Values.SlsMonitoring}}
+          procMount: Default
+        env:
+          - name: HTTP_PROBE_PORT
+            value: "7953"
+          - name: "ALIYUN_LOGTAIL_CONFIG"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: log-config-path
+          - name: "ALIYUN_LOGTAIL_USER_ID"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: log-ali-uid
+          # env tags for k8s node name and node ip
+{{ if .Values.SLS_CONTAINERD_USED }}            
+{{ if eq .Values.SLS_CONTAINERD_USED true }}
+          - name: USE_CONTAINERD
+            value: "{{.Values.SLS_CONTAINERD_USED}}"
+          - name: CONTAINERD_SOCK_PATH
+            value: "{{.Values.SLS_CONTAINERD_SOCKPATH}}"
+{{ end }}
+{{ end }}
+{{ if eq .Values.SLS_ACK_CLUSTER false }}
+          - name: "ALICLOUD_LOG_ACCESS_KEY_ID"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: access-key-id
+          - name: "ALICLOUD_LOG_ACCESS_KEY_SECRET"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: access-key-secret
+{{ end }}
+          # key to start env config      
+          - name: "ALICLOUD_LOG_DOCKER_ENV_CONFIG"
+            value: "true"
+          - name: "ALICLOUD_LOG_ECS_FLAG"
+            value: "false"
+          - name: "ALICLOUD_LOG_DEFAULT_PROJECT"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: log-project
+          - name: "ALICLOUD_LOG_ENDPOINT"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: log-endpoint
+          - name: "ALICLOUD_LOG_DEFAULT_MACHINE_GROUP"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: log-machine-group
+          - name: "ALICLOUD_DAEMONSET_EXTERNAL_USER_DEFINE_IDS"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: daemonset.external-user-define-ids
+          - name: "ALIYUN_LOGTAIL_USER_DEFINED_ID"
+            valueFrom: null
+            value: "$(ALICLOUD_LOG_DEFAULT_MACHINE_GROUP),$(ALICLOUD_DAEMONSET_EXTERNAL_USER_DEFINE_IDS)"
+          - name: "ALIYUN_LOG_ENV_TAGS"
+            value: "_node_name_|_node_ip_"
+          - name: "_node_name_"
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: "_node_ip_"
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+          # resource limit for logtail self process
+          - name: "cpu_usage_limit"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: cpu-core-limit
+          - name: "mem_usage_limit"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: mem-limit
+          - name: "max_bytes_per_sec"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: max-bytes-per-sec
+          - name: "send_request_concurrency"
+            valueFrom:
+              configMapKeyRef:
+                name: alibaba-log-configuration
+                key: send-requests-concurrency
+          - name: user_config_file_path
+            value: /etc/ilogtail/checkpoint/user_log_config.json
+          - name: docker_file_cache_path
+            value: /etc/ilogtail/checkpoint/docker_path_config.json
+          - name: check_point_filename
+            value: /etc/ilogtail/checkpoint/logtail_check_point
+          - name: check_point_dump_interval
+            value: '60'
+          - name: buffer_file_path
+            value: /etc/ilogtail/checkpoint
+{{ if .Values.SlsMonitoring }}            
+{{ if eq .Values.SlsMonitoring true }}
+          - name: ALIYUN_LOGTAIL_OBSERVER
+            value: "true"
+          - name: HOST_PROC
+            value: /logtail_host/proc
+          - name: HOST_SYS
+            value: /logtail_host/sys
+          - name: HOST_ETC
+            value: /logtail_host/etc
+          - name: HOST_VAR
+            value: /logtail_host/var
+          - name: HOST_RUN
+            value: /logtail_host/run
+          - name: HOST_DEV
+            value: /logtail_host/dev
+{{ end }}
+{{ end }}
+        volumeMounts:
+        - name: run
+          mountPath: /var/run/
+        - name: root
+          mountPath: /logtail_host
+          readOnly: true
+          mountPropagation: HostToContainer
+        - mountPath: /etc/ilogtail/checkpoint
+          name: checkpoint
+{{ if .Values.SlsMonitoring }}            
+{{ if eq .Values.SlsMonitoring true }}
+        - mountPath: /etc/ilogtail/ebpf/
+          name: ebpf
+        - mountPath: /sys
+          name: sys
+          readOnly: true
+        - mountPath: /etc/ilogtail/agent-install
+          name: dependencies
+{{ end }}
+{{ end }}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: "Exists"
+      hostNetwork: true
+      dnsPolicy: "ClusterFirstWithHostNet"
+      priorityClassName: system-cluster-critical
+      volumes:
+      - name: run
+        hostPath:
+          path: /var/run/
+      - name: root
+        hostPath:
+          path: /
+      - name: checkpoint
+        hostPath:
+          path: /var/lib/{{ .Values.NameSpace }}-logtail-ds/checkpoint
+          type: DirectoryOrCreate
+{{ if .Values.SlsMonitoring }}            
+{{ if eq .Values.SlsMonitoring true }}
+      - name: sys
+        hostPath:
+          path: /sys
+          type: Directory
+      - name: ebpf 
+        hostPath:
+          path: /var/lib/{{ .Values.NameSpace }}-logtail-ds/ebpf
+          type: DirectoryOrCreate
+      - name: dependencies
+        emptyDir: {}
+{{ end }}
+{{ end }}
+        
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: logtail-ds
+  namespace: {{ .Values.NameSpace }}
+  labels:
+    k8s-app: logtail-ds
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: logtail-ds
+  labels:
+    app: logtail-ds
+rules:
+- apiGroups:
+  - "*"
+  resources:
+  - "nodes"
+  - "nodes/metrics"
+  verbs:
+  - get
+- apiGroups: [""] # "" indicates the core API group
+  resources:
+  - configmaps
+  verbs:
+  - update
+  - get
+  resourceNames:         # 限制名称
+  - "alibaba-log-configuration"
+- apiGroups:
+    - ""
+  resources:
+    - "configmaps"
+  verbs:
+    - "create"  
+- apiGroups: [""] # "" indicates the core API group
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logtail-ds-{{ .Values.NameSpace }}
+subjects:
+- kind: ServiceAccount
+  name: logtail-ds
+  namespace: {{ .Values.NameSpace }}
+roleRef:
+  kind: ClusterRole
+  name: logtail-ds
+  apiGroup: rbac.authorization.k8s.io

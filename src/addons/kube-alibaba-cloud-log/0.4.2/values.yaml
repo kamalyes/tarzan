@@ -1,0 +1,90 @@
+# ===================== 必需要补充的内容 =====================
+# 本集群要采集到的Project名
+SlsProjectName: {{ALI_LOG_SLS_PROJECT_NAME}}
+# Project所属地域，例如上海：cn-shanghai
+Region: {{ALI_LOG_REGION}}
+# Project所属主账号uid，请用引号包围，例如"123456789"
+AliUid: {{ALI_LOG_UID}}
+# 主账号或者子账号的AK，SK，需要拥有log full权限
+AccessKeyID: {{ALI_LOG_ACCESS_KEY_ID}}
+AccessKeySecret: {{ALI_LOG_ACCESS_KEY_SECRET}}
+# 自定义集群id，请使用custom-作为前缀，命名只支持大小写，数字，-
+ClusterID: {{CLUSTER_ID}}
+# ==========================================================
+
+# 是否开启全栈监控，可选参数: true, false, 默认true
+SlsMonitoring: true
+# 使用网络，可选参数：公网Internet，内网Intranet，默认使用公网
+Net: Internet
+
+# LogService Other Config
+# 容器运行时是否为containerd，可选参数: true, false, 默认false
+SLS_CONTAINERD_USED: false
+SLS_CONTAINERD_SOCKPATH: "/run/containerd/containerd.sock"
+# 集群是否为阿里云ACK集群，可选参数: true, false, 默认false
+SLS_ACK_CLUSTER: false
+
+Version: 1.6.0
+NameSpace: kube-system
+
+# Logtail
+Logtail:
+  Image:
+    Tag: v1.8.3.0-aliyun
+  DS:
+    Limit:
+      CPU: 2000m
+      Memory: 3Gi
+      InnerCPU: 2
+      InnerMemory: 2048
+    Request:
+      CPU: 10m
+      Memory: 200Mi
+  Statefulset:
+    Replicas: 1
+    Limit:
+      CPU: 2000m
+      Memory: 3Gi
+      InnerCPU: 2
+      InnerMemory: 2048
+    Request:
+      CPU: 10m
+      Memory: 200Mi
+
+Deps:
+  Image:
+    Tag: v1.6.0-libs-aliyun
+  Limit:
+    CPU: 2000m
+    Memory: 2000Mi
+  Request:
+    CPU: 10m
+    Memory: 200Mi
+
+
+# Controller
+Controller:
+  Image: 
+    Tag: 0.4.0.0-c8ef651-aliyun
+  Limit:
+    CPU: 200m
+    Memory: 400Mi
+  Request:
+    CPU: 50m
+    Memory: 100Mi
+
+# KubeStateMetrics
+KubeStateMetrics:
+  Image:
+    Tag: v1.9.8
+  Limit:
+    CPU: 1000m
+    Memory: 1000Mi
+  Request:
+    CPU: 10m
+    Memory: 200Mi
+
+ProfileServicePort: 4040
+KubeStateMetricsServicePort: 8080
+
+ 

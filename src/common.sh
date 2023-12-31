@@ -6,6 +6,7 @@ __CURRENT_DIR=$(
 )
 
 TZ_BASE=${TZ_BASE:-/opt/tarzan}
+PERMISSION=777
 
 #######color code########
 red="31m"

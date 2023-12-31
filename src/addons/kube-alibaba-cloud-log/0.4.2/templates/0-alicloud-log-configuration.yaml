@@ -1,0 +1,41 @@
+---
+{{ if ne .Values.NameSpace "kube-system" }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: "{{ .Values.NameSpace }}"
+{{ end }}  
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alibaba-log-configuration
+  namespace: {{ .Values.NameSpace }}
+  labels:
+    logtail-deployment: v2
+data:
+    log-project: "{{ .Values.SlsProjectName }}"
+{{ if eq .Values.Net "Internet" }}
+    log-endpoint: "{{ .Values.Region }}.log.aliyuncs.com"
+{{ else }}
+    log-endpoint: "{{ .Values.Region }}-intranet.log.aliyuncs.com"
+{{ end }}    
+    log-machine-group: "k8s-group-{{ .Values.ClusterID }}"
+{{ if eq .Values.Net "Internet" }}
+    log-config-path: "/etc/ilogtail/conf/{{ .Values.Region }}-internet/ilogtail_config.json"
+{{ else }}
+    log-config-path: "/etc/ilogtail/conf/{{ .Values.Region }}/ilogtail_config.json"
+{{ end }}     
+    log-ali-uid: "{{ .Values.AliUid }}"
+    access-key-id: "{{ .Values.AccessKeyID }}"
+    access-key-secret: "{{ .Values.AccessKeySecret }}"
+    cpu-core-limit: "{{ .Values.Logtail.DS.Limit.InnerCPU }}"
+    mem-limit: "{{ .Values.Logtail.DS.Limit.InnerMemory }}"
+    max-bytes-per-sec: "209715200"
+    send-requests-concurrency: "40"
+    daemonset.external-user-define-ids: ""
+    statefulset.external-user-define-ids: ""
+    statefulset.cpu-core-limit: "{{ .Values.Logtail.Statefulset.Limit.InnerCPU }}"
+    statefulset.mem-limit: "{{ .Values.Logtail.Statefulset.Limit.InnerMemory }}"
+    statefulset.max-bytes-per-sec: "209715200"
+    statefulset.send-requests-concurrency: "40"

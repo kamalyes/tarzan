@@ -1,0 +1,211 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logtail-statefulset
+  namespace: {{ .Values.NameSpace }}
+spec:
+  ports:
+    - name: profile
+      port: {{ .Values.ProfileServicePort }}
+      protocol: TCP
+      targetPort: 4040
+    - name: logtail-statefulset-endpoint
+      port: 18689
+      protocol: TCP
+      targetPort: 18689
+    - name: skywalking-v3
+      port: 11800
+      protocol: TCP
+      targetPort: 11800
+    - name: skywalking-v2
+      port: 21800
+      protocol: TCP
+      targetPort: 21800
+  selector:
+    app: logtail-statefulset
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: logtail-statefulset
+  name: logtail-statefulset
+  namespace: {{ .Values.NameSpace }}
+spec:
+{{ if (and (.Values.SlsMonitoring) (eq .Values.SlsMonitoring true))}}
+  replicas: {{ .Values.Logtail.Statefulset.Replicas }}
+{{ else }}
+  replicas: 1
+{{ end }}
+  serviceName: logtail-statefulset
+  selector:
+    matchLabels:
+      app: logtail-statefulset
+  template:
+    metadata:
+      labels:
+        app: logtail-statefulset
+        version: "{{ .Values.Version }}"
+    spec:
+      serviceAccountName: logtail-statefulset
+{{ if eq .Values.SlsMonitoring true }}
+      volumes:
+        - name: dependencies
+          emptyDir: { }
+      initContainers:
+        - name: deps
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c", "cp -r /etc/ilogtail/agent-install/* /share"]
+          volumeMounts:
+            - mountPath: /share
+              name: dependencies
+{{ if eq .Values.Net "Internet" }}
+          image: registry.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Deps.Image.Tag }}
+{{ else }}
+          image: registry-vpc.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Deps.Image.Tag }}
+{{ end }}
+{{end}}
+      containers:
+        - name: logtail
+{{ if .Values.SlsMonitoring }}
+{{ if eq .Values.SlsMonitoring true }}
+          volumeMounts:
+          - mountPath: /etc/ilogtail/agent-install
+            name: dependencies
+{{ end }}
+{{ end }}
+          env:
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: ILOGTAIL_PROMETHEUS_CLUSTER_REPLICAS
+              value: "{{ .Values.Logtail.Statefulset.Replicas }}"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath:  metadata.name
+            - name: ALIYUN_LOGTAIL_USER_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: log-ali-uid
+            # key to start env config      
+            - name: "ALICLOUD_LOG_DOCKER_ENV_CONFIG"
+              value: "false"
+            - name: "ALICLOUD_LOG_DEFAULT_PROJECT"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: log-project
+            - name: "ALICLOUD_LOG_DEFAULT_MACHINE_GROUP"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: log-machine-group
+            - name: "ALICLOUD_STATEFULSET_EXTERNAL_USER_DEFINE_IDS"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: statefulset.external-user-define-ids
+            - name: ALIYUN_LOGTAIL_USER_DEFINED_ID
+              value: "$(ALICLOUD_LOG_DEFAULT_MACHINE_GROUP)-statefulset,$(ALICLOUD_LOG_DEFAULT_MACHINE_GROUP)-singleton-$(MY_POD_NAME),$(ALICLOUD_STATEFULSET_EXTERNAL_USER_DEFINE_IDS)"
+            - name: ALIYUN_LOGTAIL_CONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: log-config-path
+            - name: "cpu_usage_limit"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: statefulset.cpu-core-limit
+            - name: "mem_usage_limit"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: statefulset.mem-limit
+            - name: "max_bytes_per_sec"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: statefulset.max-bytes-per-sec
+            - name: "send_request_concurrency"
+              valueFrom:
+                configMapKeyRef:
+                  name: alibaba-log-configuration
+                  key: statefulset.send-requests-concurrency
+            - name: "ALICLOUD_LOG_STATEFULSET_FLAG"
+              value: "true"
+{{ if eq .Values.Net "Internet" }}
+          image: registry.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Logtail.Image.Tag }}
+{{ else }}
+          image: registry-vpc.{{ .Values.Region }}.aliyuncs.com/log-service/logtail:{{ .Values.Logtail.Image.Tag }}
+{{ end }}   
+          resources:
+            limits:
+              cpu: "{{ .Values.Logtail.Statefulset.Limit.CPU }}"
+              memory: "{{ .Values.Logtail.Statefulset.Limit.Memory }}"
+            requests:
+              cpu: "{{ .Values.Logtail.Statefulset.Request.CPU }}"
+              memory: "{{ .Values.Logtail.Statefulset.Request.Memory }}"
+---
+{{ if .Values.SlsMonitoring }}            
+{{ if eq .Values.SlsMonitoring true }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: logtail-statefulset
+  labels:
+    app: logtail-statefulset
+rules:
+- apiGroups:
+  - "*"
+  resources:
+  - "*"
+  verbs:
+  - get
+  - list
+  - watch
+- nonResourceURLs:
+  - /metrics
+  verbs:
+  - get
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: {{ .Values.NameSpace }}
+  name: logtail-statefulset
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logtail-statefulset-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    namespace: {{ .Values.NameSpace }}
+    name: logtail-statefulset
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logtail-statefulset
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: logtail-statefulset
+subjects:
+  - kind: ServiceAccount
+    namespace: {{ .Values.NameSpace }}
+    name: logtail-statefulset
+---
+
+{{ end }}
+{{ end }}

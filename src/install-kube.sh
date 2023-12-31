@@ -72,8 +72,8 @@ function run_k8s() {
         kube_admin_config_file="/etc/kubernetes/admin.conf"
         cp -i $kube_admin_config_file $HOME/.kube/config
         chown $(id -u):$(id -g) $HOME/.kube/config
-        [[ -z $(grep $kube_admin_config_file ~/.bashrc) ]] && echo "export KUBECONFIG=$kube_admin_config_file" >>$HOME/.bashrc
-        source ~/.bashrc
+        [[ -z $(grep $kube_admin_config_file $HOME/.bashrc) ]] && echo "export KUBECONFIG=$kube_admin_config_file" >>$HOME/.bashrc
+        source $HOME/.bashrc
         log "开始组装slave安装包"
         NODE_PACKAGE_PATH="kube_slave"
         rm -rf $NODE_PACKAGE_PATH
@@ -152,7 +152,7 @@ while [[ $# > 0 ]]; do
         ;;
     -hname | --hostname)
         KUBE_NODE_NAME=$2
-        echo "set hostname: $(color_echo $green $HOST_NAME)"
+        echo "set hostname: $(color_echo $green $KUBE_NODE_NAME)"
         hostnamectl set-hostname $KUBE_NODE_NAME
         shift
         ;;
@@ -194,6 +194,7 @@ while [[ $# > 0 ]]; do
         echo "   -addr, --advertise_address		kubectl access address"
         echo "   -p, --port                		Port number for external access"
         echo "   -tk, --token                  	token, default=tarzan.e6fa0b76a6898af7"
+        echo "   -hname, --hostname             set hostname"
         echo "   --docker_username              docker login username"
         echo "   --docker_password              docker login password"
         echo "   --docker_register_url          docker login registry"

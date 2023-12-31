@@ -78,18 +78,13 @@ function dashboard() {
     if [ "$1" ];then
       DASHBOARD_VERSION=$1
     fi
+    kubectl create ns kubernetes-dashboard
     kubectl apply -f addons/kube-dashboard/$DASHBOARD_VERSION/dashboard-init.yaml
-    kubectl get all -n kube-dashboard
-    check_pod_status kube-dashboard
-    kubectl create serviceaccount dashboard-admin -n kube-dashboard
-    kubectl create clusterrolebinding dashboard-admin-rb --clusterrole=cluster-admin --serviceaccount=kube-dashboard:dashboard-admin
-    ADMIN_SECRET=$(kubectl get secrets -n kube-dashboard | grep dashboard-admin | awk '{print $1}')
-    kubectl -n kube-dashboard describe secret $(kubectl -n kube-dashboard get secret | grep dashboard-admin | awk '{print $1}')
-    DASHBOARD_LOGIN_TOKEN=$(kubectl describe secret -n kube-dashboard ${ADMIN_SECRET} | grep -E '^token' | awk '{print $2}')
-    echo ${DASHBOARD_LOGIN_TOKEN} > kube-dashboard-token.txt
-    kubectl create -f dashboard-svc-account.yaml
+    kubectl get all -n kubernetes-dashboard
+    check_pod_status kubernetes-dashboard
+    kubectl create -f addons/kube-dashboard/$DASHBOARD_VERSION/dashboard-svc-account.yaml
+    kubectl create token dashboard-admin -n kubernetes-dashboard
     log "安装完成,浏览方式: 用firefox 浏览 https://nodes-ip:30001 (要用命令查看pod-dashboard所对应的node节点),跳出不安全提示,然后高级点添加网站到安全例外"
-    log "登录token见 安装目录下token.txt "
 }
 
 function inginx() {
@@ -124,11 +119,34 @@ function metrics() {
     log "监控组件metrics安装完成"
 }
 
+function alibaba_cloud_log() {
+    ALI_CLOUD_LOG_VERSION="0.4.2"
+    ALI_LOG_SLS_PROJECT_NAME=$1
+    ALI_LOG_REGION=$2
+    ALI_LOG_UID=$3
+    ALI_LOG_ACCESS_KEY_ID=$4
+    ALI_LOG_ACCESS_KEY_SECRET=$5
+    if [ "$6" ];then
+      ALI_CLOUD_LOG_VERSION=$6
+    fi
+    KUBE_CLUSTER_ID=echo $RANDOM
+    chmod 744 addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/k8s-custom-install.sh
+    sed -i "s/{{ALI_LOG_SLS_PROJECT_NAME}}/${ALI_LOG_SLS_PROJECT_NAME}/g" addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/values.yaml
+    sed -i "s/{{ALI_LOG_REGION}}/${ALI_LOG_REGION}/g" addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/values.yaml
+    sed -i "s/{{ALI_LOG_UID}}/${ALI_LOG_UID}/g" addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/values.yaml
+    sed -i "s/{{ALI_LOG_ACCESS_KEY_ID}}/${ALI_LOG_ACCESS_KEY_ID}/g" addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/values.yaml
+    sed -i "s/{{ALI_LOG_ACCESS_KEY_SECRET}}/${ALI_LOG_ACCESS_KEY_SECRET}/g" addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/values.yaml
+    sed -i "s/{{CLUSTER_ID}}/custom-${KUBE_CLUSTER_ID}/g" addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/values.yaml
+    bash addons/kube-alibaba-cloud-log/${ALI_CLOUD_LOG_VERSION}/k8s-custom-install.sh; kubectl apply -R -f result
+}
+
 function all(){
   flannel
   dashboard
   inginx
   metrics
+  descheduler
+  alibaba_cloud_log
 }
 
 function main_entrance() {
@@ -145,9 +163,16 @@ function main_entrance() {
   metrics)
     metrics
     ;;
+  descheduler)
+    descheduler
+    ;;
+  alibaba_cloud_log)
+    alibaba_cloud_log
+    ;;
   all)
     all
     ;;
   esac
 }
 main_entrance $@
+

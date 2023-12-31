@@ -143,8 +143,9 @@ function offline_install_kube(){
         log "开始离线安装bash命令补全工具"
         rpm -ivhU offline/bash-completion/*.rpm --nodeps --force
         log "命令行补全"
-        [[ -z $(grep kubectl ~/.bashrc) ]] && echo "source <(kubectl completion bash)" >> ~/.bashrc
-        [[ -z $(grep kubeadm ~/.bashrc) ]] && echo "source <(kubeadm completion bash)" >> ~/.bashrc
+        [[ -z $(grep kubectl $HOME/.bashrc) ]] && echo "source <(kubectl completion bash)" >>$HOME/.bashrc
+        [[ -z $(grep kubeadm $HOME/.bashrc) ]] && echo "source <(kubeadm completion bash)" >>$HOME/.bashrc
+        source $HOME/.bashrc
         log "离线安装bash命令补全工具 OK"
         cni_install_path="/opt/cni/bin"
         cni_version="v1.4.0"
