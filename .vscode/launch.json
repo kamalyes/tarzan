@@ -1,0 +1,31 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Bash Script",
+            "type": "bashdb",
+            "request": "launch",
+            "program": "${file}",
+            "args": [
+                "-mode",
+                "offline",
+                "-v",
+                "v1.23.3",
+                "-addr",
+                "172.16.196.66",
+                "-p",
+                "6443",
+                "-tk",
+                "tarzan.0b76a6898af7",
+                "--docker_username",
+                "信息",
+                "--docker_password",
+                "z88",
+                "--docker_register_url",
+                "registry.cn-snzhen.aliyuncs.com",
+                "--flannel"
+            ],
+            "internalConsoleOptions": "openOnSessionStart"
+        }
+    ]
+}
