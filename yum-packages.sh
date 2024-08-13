@@ -59,21 +59,38 @@ function offline_install_dependent() {
   log "离线安装常用工具包完成"
 }
 
-function offline_install_containerd() {
-  install_dcni_prompt="离线安装Containerd"
-  read -p "是否${install_dcni_prompt}? [n/y]" __choice </dev/tty
+function offline_install_conntrack() {
+  install_conntrack_prompt="离线安装Conntrack"
+  read -p "是否${install_conntrack_prompt}? [n/y]" __choice </dev/tty
   case "$__choice" in
       y | Y)
-    log "开始${install_dcni_prompt}"
+    log "开始${install_conntrack_prompt}"
     rpm -ivhU offline/conntrack/*.rpm --nodeps --force
-    rpm -ivhU offline/containerd/*.rpm --nodeps --force
-    log "${install_dcni_prompt}完成"
+    log "${install_conntrack_prompt}完成"
   ;;
   n | N)
-  echo "退出${install_dcni_prompt}" &
+  echo "退出${install_conntrack_prompt}" &
   ;;
   *)
-  echo "退出${install_dcni_prompt}" &
+  echo "退出${install_conntrack_prompt}" &
+  ;;
+  esac
+}
+
+function offline_install_containerd() {
+  install_containerd_prompt="离线安装Containerd"
+  read -p "是否${install_containerd_prompt}? [n/y]" __choice </dev/tty
+  case "$__choice" in
+      y | Y)
+    log "开始${install_containerd_prompt}"
+    rpm -ivhU offline/containerd/*.rpm --nodeps --force
+    log "${install_containerd_prompt}完成"
+  ;;
+  n | N)
+  echo "退出${install_containerd_prompt}" &
+  ;;
+  *)
+  echo "退出${install_containerd_prompt}" &
   ;;
   esac
 }
@@ -81,7 +98,7 @@ function offline_install_containerd() {
 function online_install_docker() {
     if which docker >/dev/null; then
       which_prompt="检测到本地已安装Docker"
-      install_docker_prompt="覆盖安装"
+      install_docker_prompt="在线覆盖安装"
     else
       install_docker_prompt="在线安装Docker"
     fi
@@ -104,7 +121,7 @@ function online_install_docker() {
       else
         # journalctl -u docker # 查看运行日志
         # systemctl daemon-reload && systemctl restart docker # 重载配置
-        log "Docker安装完成"
+        log "${install_docker_prompt}完成"
       fi
     ;;
     n | N)
@@ -116,18 +133,17 @@ function online_install_docker() {
     esac
 }
 
-
 function offline_install_docker() {
     if which docker >/dev/null; then
       which_prompt="检测到本地已安装Docker"
-      install_docker_prompt="覆盖安装"
+      install_docker_prompt="离线覆盖安装"
     else
       install_docker_prompt="离线安装Docker"
     fi
     read -p "${which_prompt}请确认是否${install_docker_prompt}? [n/y]" __choice </dev/tty
     case "$__choice" in
     y | Y)
-      rpm -ivhU offline/docker-before/*.rpm --nodeps --force
+      rpm -ivhU offline/docker-before/*.rpm --nodeps --force &&\
       rpm -ivhU offline/docker/*.rpm --nodeps --force
       log "${install_docker_prompt}完成"
       if which systemctl >/dev/null; then
@@ -142,7 +158,7 @@ function offline_install_docker() {
       else
         # journalctl -u docker # 查看运行日志
         systemctl daemon-reload && systemctl restart docker # 重载配置
-        log "Docker安装完成"
+        log "${install_docker_prompt}完成"
       fi
     ;;
     n | N)
@@ -155,17 +171,15 @@ function offline_install_docker() {
 }
 
 function offline_install_kube(){
-    yum list installed kubelet
-    if [ $? -eq 0 ];then
-      if which kubectl >/dev/null; then
-          old_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
-          which_prompt="检测到本地已安装kubectl-$old_k8s_version"
-          install_kubectl_prompt="覆盖安装"
-      fi
+    log "接收到传递的KUBE_VERSION参数为$KUBE_VERSION"
+    if which kubectl >/dev/null; then
+      old_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
+      which_prompt="检测到本地已安装kubectl-$old_k8s_version"
+      install_kubectl_prompt="离线覆盖安装"
     else
-        install_kubectl_prompt="离线安装kubectl"
+      install_kubectl_prompt="离线安装kubectl"
     fi
-    read -p "${which_prompt}确认是否${install_kubectl_prompt}? [n/y]" __choice </dev/tty
+    read -p "${which_prompt}请确认是否${install_kubectl_prompt}? [n/y]" __choice </dev/tty
     case "$__choice" in
         y | Y)
         log "开始离线安装kubelet kubeadm kubectl"
@@ -177,14 +191,16 @@ function offline_install_kube(){
         log "写入bash-completion环境变量"
         [[ -z $(grep kubectl ~/.bashrc) ]] && echo "source /usr/share/bash-completion/bash_completion && kubectl completion bash | sudo tee /etc/bash_completion.d/kubectl > /dev/null"
         log "离线安装bash命令补全工具 OK"
-        cni_install_path="/opt/cni/bin"
-        cni_version="v1.4.0"
-        log "开始离线安装cni-plugins-$cni_version"
-        rm -rf  $cni_install_path  && mkdir -p $cni_install_path && tar zxvf offline/cni/cni-plugins-linux-amd64-$cni_version.tgz -C $cni_install_path
-        log "离线安装cni-plugins-${cni_version} OK"
         log "设置kubelet为开机自启并现在立刻启动服务"
         systemctl enable kubelet --now 2>&1 | tee -a ${__current_dir}/install.log
         log "设置kubectl自启OK"
+        log "检查DockerCompose是否正常安装"
+        kubectl version 1>/dev/null 2>/dev/null
+        if [ $? != 0 ]; then
+          log "${install_kubectl_prompt}失败"
+        else
+          log "${install_kubectl_prompt}完成"
+        fi
         ;;
         n | N)
         echo "退出${install_kubectl_prompt}" &
@@ -195,43 +211,30 @@ function offline_install_kube(){
     esac
 }
 
-function offline_install_public_dependency() {
-  offline_install_dependent && \
-  offline_install_containerd
-}
-
-
-
-function offline_install_containerd() {
-   if which containerd >/dev/null; then
-      which_prompt="检测到本地已安装containerd"
-      install_containerd_prompt="覆盖安装"
-  else
-      install_containerd_prompt="离线安装containerd"
-  fi
-  read -p "${which_prompt}确认是否${install_containerd_prompt}? [n/y]" __choice </dev/tty
-  case "$__choice" in
-    y | Y)
-      tar Cxzvf /usr/local offline/containerd/containerd-1.7.11-linux-amd64.tar.gz
-      mkdir tmp
-      tar -xvf offline/containerd/cri-containerd-cni-1.7.11-linux-amd64.tar.gz -C tmp/
-      log "使用systemd管理container"
-      mkdir -p /usr/local/lib/systemd/system/
-      cp tmp/etc/systemd/system/containerd.service /usr/local/lib/systemd/system/
-    ;;
-    n | N)
-      echo "退出${install_containerd_prompt}" &
-      ;;
-    *)
-      echo "退出${install_containerd_prompt}" &
-      ;;
-  esac
+function offline_install_cni(){
+    install_cni_prompt="离线安装cni"
+    read -p "请确认是否${install_cni_prompt}? [n/y]" __choice </dev/tty
+    case "$__choice" in
+        y | Y)
+         cni_install_path="/opt/cni/bin"
+        cni_version="v1.4.0"
+        log "开始${install_cni_prompt}-$cni_version"
+        rm -rf  $cni_install_path  && mkdir -p $cni_install_path && tar zxvf offline/cni/cni-plugins-linux-amd64-$cni_version.tgz -C $cni_install_path
+        log "${install_cni_prompt}-${cni_version} OK"
+        ;;
+        n | N)
+        echo "退出${install_cni_prompt}" &
+        ;;
+        *)
+        echo "退出${install_cni_prompt}" &
+        ;;
+    esac
 }
 
 function online_install_docker() {
     if which docker >/dev/null; then
       which_prompt="检测到本地已安装Docker"
-      install_docker_prompt="覆盖安装"
+      install_docker_prompt="在线覆盖安装"
     else
       install_docker_prompt="在线安装Docker"
     fi
@@ -254,7 +257,7 @@ function online_install_docker() {
       else
         # journalctl -u docker # 查看运行日志
         # systemctl daemon-reload && systemctl restart docker # 重载配置
-        log "Docker安装完成"
+        log "${install_docker_prompt}完成"
       fi
     ;;
     n | N)
@@ -269,7 +272,7 @@ function online_install_docker() {
 function offline_install_dockercompose() {
   if which docker-compose >/dev/null; then
       which_prompt="检测到本地已安装DockerCompose"
-      install_dockercompose_prompt="覆盖安装"
+      install_dockercompose_prompt="离线覆盖安装"
   else
       install_dockercompose_prompt="离线安装DockerCompose"
   fi
@@ -297,6 +300,14 @@ function offline_install_dockercompose() {
   esac
 }
 
+
+function offline_install_public_dependency() {
+  offline_install_dependent && \
+  offline_install_containerd && \
+  offline_install_conntrack && \
+  offline_install_cni
+}
+
 function main_entrance() {
   case "${action}" in
   update_repos)
@@ -311,6 +322,9 @@ function main_entrance() {
   offline_install_containerd)
     offline_install_containerd
     ;;
+  offline_install_conntrack)
+    offline_install_conntrack
+    ;;
   online_install_docker)
     online_install_docker
     ;;
@@ -323,7 +337,14 @@ function main_entrance() {
   online_install_common_packages)
     online_install_common_packages
     ;;
-
+  offline_install_kube)
+    KUBE_VERSION=$2
+    log "Offline install Kube K8s Version $KUBE_VERSION"
+    offline_install_kube
+    ;;
+  offline_install_cni)
+    offline_install_cni
+    ;;
   esac
 }
 main_entrance $@

@@ -4,9 +4,6 @@ source ./common.sh
 action=$1
 
 function online_pull_images() {
-  # 打印日志信息，表示开始下载所需的K8s版本镜像
-  log "Downloading the required K8s $version images..."
-  
   # 列出所有需要下载的镜像
   kubeadm config images list --image-repository $GLOBAL_IMAGE_REPOSITORY
   
@@ -74,13 +71,10 @@ function online_pull_images() {
 }
 
 function offline_load_images() {
-  # 打印日志信息，表示开始加载所需的K8s镜像
-  log "Loading the required K8s images..."
-  DOCKER_IMAGE_TAR_PATH="./crictl-images"
+  # 使用 find 命令获取目录中所有 .tar 文件
+  CRICTL_IMAGE_TAR_PATH="offline/crictl-images"
+  files=($(find "$CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION" -type f -name "*.tar"))
 
-  # 定义存放K8s版本镜像文件的数组
-  files=($DOCKER_IMAGE_TAR_PATH/$KUBE_VERSION/*.tar)
-  
   # 遍历数组中的每个文件，并导入到K8s中
   for file in "${files[@]}"; do
       log "Importing $file..."
@@ -91,7 +85,7 @@ function offline_load_images() {
   case $KUBE_NETWORK in
     "flannel")
       # Flannel网络插件的镜像文件
-      network_files=(kube-flannel-cni-plugin_v1.2.0.tar kube-flannel-v0.24.0.tar.gz)
+      network_files=(kube-flannel-cni-plugin_v1.2.0.tar.gz kube-flannel-v0.24.0.tar.gz)
       ;;
     "calico")
       # Calico网络插件的镜像文件
@@ -100,25 +94,24 @@ function offline_load_images() {
   esac
 
   # 如果定义了网络插件镜像文件，则导入它们
-  if [[ -n "${network_files[*]}" ]]; then
-    full_path="$DOCKER_IMAGE_TAR_PATH/$network_files"
-    for full_path in "${network_files[@]}"; do
-      # 检查文件是否存在
-      if [ -f "$full_path" ]; then
-        log "Importing network file $network_file..."
-        ctr -n=k8s.io image import "$full_path"
-      else
-        echo "File $other_file not found."
-      fi
-    done
-  fi
+  for network_file in "${network_files[@]}"; do
+    # 拼接完整路径
+    full_path="$CRICTL_IMAGE_TAR_PATH/$network_file"
+    # 检查文件是否存在
+    if [ -f "$full_path" ]; then
+      log "Importing network file $network_file..."
+      ctr -n=k8s.io image import "$full_path"
+    else
+      echo "File $network_file not found."
+    fi
+  done
 
   # 其他常用的K8s相关镜像文件
   other_files=(kube-dashboard_v2.7.0.tar.gz kube-metrics-scraper_v1.0.4 kube-metrics-server_v0.6.4.tar.gz kube-nginx-ingress-controller_v1.9.5.tar.gz kube-state-metrics_2.10.0.tar.gz kube-webhook-certgen_v20231011-8b53cabe0.tar.gz)
   
   # 导入其他镜像文件
   for other_file in "${other_files[@]}"; do
-      full_path="$DOCKER_IMAGE_TAR_PATH/$other_file"
+      full_path="$CRICTL_IMAGE_TAR_PATH/$other_file"
       # 检查文件是否存在
       if [ -f "$full_path" ]; then
         log "Importing other file $other_file..."
@@ -132,9 +125,23 @@ function offline_load_images() {
 function main_entrance() {
   case "${action}" in
   online_pull_images)
+    KUBE_VERSION=$2
+    GLOBAL_IMAGE_REPOSITORY=$3
+    log "Online Downloading images required 
+        K8s Version $KUBE_VERSION
+        Image Repository $GLOBAL_IMAGE_REPOSITORY
+        "
     online_pull_images
     ;;
   offline_load_images)
+    KUBE_VERSION=$2
+    KUBE_NETWORK=$3
+    GLOBAL_IMAGE_REPOSITORY=$4
+    log "Offline Load images required 
+        K8s Version $KUBE_VERSION
+        Network Type $KUBE_NETWORK
+        Image Repository $GLOBAL_IMAGE_REPOSITORY
+        "
     offline_load_images
     ;;
   esac

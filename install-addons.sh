@@ -18,26 +18,28 @@ function check_pod_status(){
     done
 }
 
-function flannel() {
-    echo -e "开始安装网络组件flannel-v${FLANNEL_VERSION}"
+function taint() {
     if [ "$1" ];then
-      FLANNEL_VERSION=$1
+      KUBE_NODE_NAME=$1
     fi
-    del_flannel_prompt="去掉Master污点"
-    read -p "是否确认${del_flannel_prompt}? [n/y]" __choice </dev/tty
+    taint_prompt="去掉Master污点"
+    read -p "是否确认${taint_prompt}? [n/y]" __choice </dev/tty
     case "$__choice" in
     y | Y)
-      kubectl taint nodes `hostname` node-role.kubernetes.io/master:NoSchedule- 2>/dev/null
-      kubectl taint nodes `hostname` node.kubernetes.io/not-ready:NoSchedule- 2>/dev/null
+      kubectl taint nodes $KUBE_NODE_NAME node-role.kubernetes.io/master:NoSchedule- 2>/dev/null
+      kubectl taint nodes $KUBE_NODE_NAME node.kubernetes.io/not-ready:NoSchedule- 2>/dev/null
     ;;
     n | N)
-        log "跳过${del_flannel_prompt}..." &
+        log "跳过${taint_prompt}..." &
         ;;
     *)
-        log "跳过${del_flannel_prompt}..." &
+        log "跳过${taint_prompt}..." &
         ;;
     esac
-    docker load -i offline/docker-images/kube-flannel-v0.24.0.tar.gz
+}
+
+function flannel() {
+    echo -e "开始安装网络组件flannel-v${FLANNEL_VERSION}"
     kubectl apply -f addons/kube-flannel/${FLANNEL_VERSION}/flannel-init.yaml
     kubectl get all -n kube-flannel
     check_pod_status kube-flannel
@@ -45,18 +47,12 @@ function flannel() {
 
 function calico() {
     echo -e "开始安装网络组件calico-v${CALICO_VERSION}"
-    if [ "$1" ];then
-      CALICO_VERSION=$1
-    fi
     kubectl apply -f addons/kube-calico/${CALICO_VERSION}/calico-init.yaml
     echo -e "网络组件flannel安装完成"
 }
 
 function dashboard() {
     echo -e "开始安装k8s-web组件Dashboard-v${DASHBOARD_VERSION}"
-    if [ "$1" ];then
-      DASHBOARD_VERSION=$1
-    fi
     kubectl apply -f addons/kube-dashboard/$DASHBOARD_VERSION/dashboard-init.yaml
     kubectl get all -n kube-dashboard
     check_pod_status kube-dashboard
@@ -73,9 +69,6 @@ function dashboard() {
 
 function inginx() {
     echo -e "开始安装k8s-nginx组件ingress-nginx-v${INGRESS_NGINX_VERSION}"
-    if [ "$1" ];then
-      INGRESS_NGINX_VERSION=$1
-    fi
     kubectl apply -f addons/kube-ingress-nginx/$INGRESS_NGINX_VERSION/ingress-nginx-init.yaml
     kubectl get all -n ingress-nginx
     check_pod_status ingress-nginx
@@ -83,12 +76,6 @@ function inginx() {
 }
 
 function metrics() {
-    if [ "$1" ];then
-      METRICS_VERSION=$1
-    fi
-    if [ "$2" ];then
-      STATE_METRICS_STANDARD_VERSION=$2
-    fi
     echo -e "开始安装监控组件metrics-v${METRICS_VERSION}"
     kubectl apply -f addons/kube-metrics/${METRICS_VERSION}/metrics-init.yaml
     echo -e "开始安装监控组件state-metrics-standard-v${STATE_METRICS_STANDARD_VERSION}"
@@ -110,30 +97,34 @@ function all(){
 function main_entrance() {
   case "${action}" in
   flannel)
+    FLANNEL_VERSION=$2
+    log "prepare install flannel version $FLANNEL_VERSION"
     flannel
-    FLANNEL_VERSION="0.24.0"
-    echo "prepare install flannel version $(color_echo $green $FLANNEL_VERSION)"
     ;;
   calico)
+    CALICO_VERSION=$2
+    log "prepare install calico version $CALICO_VERSION"
     calico
-    CALICO_VERSION="3.26.1"
-    echo "prepare install calico version $(color_echo $green $CALICO_VERSION)"
     ;;
   dashboard)
+    DASHBOARD_VERSION=$2
+    log "prepare install dashboard version $DASHBOARD_VERSION"
     dashboard
-    DASHBOARD_VERSION="2.7.0"
-    echo "prepare install dashboard version $(color_echo $green $DASHBOARD_VERSION)"
     ;;
   inginx)
+    INGINX_NGINX_VERSION=$2
+    log "prepare install inginx version $INGINX_NGINX_VERSION"
     inginx
-    INGINX_NGINX_VERSION="1.9.5"
-    echo "prepare install inginx version $(color_echo $green $INGINX_NGINX_VERSION)"
     ;;
   metrics)
+    METRICS_VERSION=$2
+    STATE_METRICS_STANDARD_VERSION=$3
+    log "prepare install metrics version $METRICS_VERSION and state-metrics-standard version $STATE_METRICS_STANDARD_VERSION"
     metrics
-    METRICS_VERSION="0.6.4"
-    STATE_METRICS_STANDARD_VERSION="2.10.0"
-    echo "prepare install metrics version $(color_echo $green $METRICS_VERSION) and state-metrics-standard version $(color_echo $green $STATE_METRICS_STANDARD_VERSION) "
+    ;;
+  taint)
+    KUBE_NODE_NAME=$2
+    taint
     ;;
   all)
     all

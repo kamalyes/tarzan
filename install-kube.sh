@@ -1,28 +1,6 @@
 #!/usr/bin/env bash
 source ./common.sh
 
-# 初始化系统  必须使用root或者具备sudo权限帐号运行
-
-PERMISSION=755
-IS_MASTER=0
-KUBE_VERSION="1.23.3"
-ONLY_INSTALL_DEPEND="false"
-KUBE_ADVERTISE_ADDRESS=$(cat /etc/hosts | grep localhost | awk '{print $1}' | awk 'NR==1{print}')
-KUBE_BIND_PORT="6443"
-KUBE_TOKEN="tarzan.e6fa0b76a6898af7"
-NODE_PACKAGE_PATH="kube_slave"
-GLOBAL_IMAGE_REPOSITORY="registry.cn-hangzhou.aliyuncs.com/google_containers"
-IMAGE_LOAD_TYPE="offline"
-KUBE_ADMIN_CONFIG_FILE="/etc/kubernetes/admin.conf"
-KUBE_NODE_NAME="k8s-master"
-
-FLANNEL_VERSION="0.24.0"
-CALICO_VERSION="3.26.1"
-DASHBOARD_VERSION="2.7.0"
-INGRESS_NGINX_VERSION="1.9.5"
-METRICS_VERSION="0.6.4"
-STATE_METRICS_STANDARD_VERSION="2.10.0"
-
 # cancel centos alias
 [[ -f /etc/redhat-release ]] && unalias -a
 
@@ -39,67 +17,63 @@ function install_depend(){
     log "安装所需依赖"
     run_command "/bin/bash yum-packages.sh offline_install_public_dependency"
     if [[ $IS_MASTER == 1 ]]; then
-        run_command "/bin/bash yum-packages.sh offline_install_docker"
+        run_command "/bin/bash yum-packages.sh offline_install_docker" && \
         run_command "/bin/bash yum-packages.sh offline_install_dockercompose"
     fi
-    if [[ $IMAGE_LOAD_TYPE == "offline" ]]; then
-        run_command "/bin/bash crictl.sh offline_load_images"
-    else
-        # kubeadm config images pull --image-repository $GLOBAL_IMAGE_REPOSITORY
-        run_command "/bin/bash crictl.sh online_pull_images"
-    fi
     crictl images | grep $GLOBAL_IMAGE_REPOSITORY
-    run_command "/bin/bash yum-packages.sh offline_install_kube"
+    run_command "/bin/bash yum-packages.sh offline_install_kube $KUBE_VERSION"
 }
 
 function prepare_work() {
 	log "初始化k8s所需要环境"
-	run_command "/bin/bash setupconfig.sh"
-    cat <<EOF >/etc/yum.repos.d/kubernetes.repo
-[kubernetes]
-name=Kubernetes
-baseurl=http://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
-enabled=1
-gpgcheck=0
-repo_gpgcheck=0
-gpgkey=http://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
-       http://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
-EOF
-    mkdir -p /etc/sysctl.d
-    chmod 751 -R /etc/sysctl.d
-    cat <<EOF >/etc/sysctl.d/kubernetes.conf
-# 开启数据包转发功能（实现vxlan）
-net.ipv4.ip_forward=1
-# iptables对bridge的数据进行处理
-net.bridge.bridge-nf-call-iptables=1
-net.bridge.bridge-nf-call-ip6tables=1
-net.bridge.bridge-nf-call-arptables=1
-# 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通
-net.ipv4.tcp_tw_recycle=0
-# 不允许将TIME-WAIT sockets重新用于新的TCP连接
-net.ipv4.tcp_tw_reuse=0
-# socket监听(listen)的backlog上限
-net.core.somaxconn=32768
-# 最大跟踪连接数,默认 nf_conntrack_buckets * 4
-net.netfilter.nf_conntrack_max=1000000
-# 禁止使用 swap 空间,只有当系统 OOM 时才允许使用它
-vm.swappiness=0
-# 计算当前的内存映射文件数。
-vm.max_map_count=655360
-# 内核可分配的最大文件数
-fs.file-max=6553600
-# 持久连接
-net.ipv4.tcp_keepalive_time=600
-net.ipv4.tcp_keepalive_intvl=30
-net.ipv4.tcp_keepalive_probes=10
-EOF
-sysctl -p /etc/sysctl.d/kubernetes.conf
+    KUBE_PAUSE_VERSION=$KUBE_PAUSE_VERSION
+    if [[ $KUBE_VERSION == "1.28.2" ]]; then
+        KUBE_PAUSE_VERSION=3.9
+    fi
+	run_command "/bin/bash setupconfig.sh source_chrony" && \
+    run_command "/bin/bash setupconfig.sh update_kubernetes_conf" && \
+	run_command "/bin/bash setupconfig.sh rest_firewalld" && \
+	run_command "/bin/bash setupconfig.sh disable_swapoff" && \
+	run_command "/bin/bash setupconfig.sh disabled_selinux" && \
+	run_command "/bin/bash setupconfig.sh update_ipvs_conf" && \
+	run_command "/bin/bash setupconfig.sh update_k8s_module_conf" && \
+	run_command "/bin/bash setupconfig.sh update_limits_conf" && \
+	run_command "/bin/bash setupconfig.sh update_containerd_conf $GLOBAL_IMAGE_REPOSITORY $KUBE_PAUSE_VERSION" && \
+	run_command "/bin/bash setupconfig.sh check"
+}
 
-mkdir -p /var/lib/kubelet
-chmod 777 -R /var/lib/kubelet
+function upload_hosts {
+    local update_host_prompt="Updating hosts file"
+    echo "$KUBE_ADVERTISE_ADDRESS k8s-master" >>/etc/hosts
 
-mkdir -p /etc/kubernetes
-chmod 777 -R /etc/kubernetes
+    # 检查 conf/hosts 文件是否存在
+    if [ -f "conf/hosts" ]; then
+        echo "Processing conf/hosts file"
+
+        # 逐行处理 conf/hosts 文件
+        while IFS= read -r line; do
+            # 检查是否该行内容在 /etc/hosts 中存在
+            if ! grep -q "$line" /etc/hosts; then
+                # 不存在则追加到 /etc/hosts 后面
+                echo "$line" >> /etc/hosts
+            fi
+        done < "conf/hosts"
+
+        service network restart
+        log "${update_host_prompt} OK"
+    else
+        echo "conf/hosts file not found. Skipping."
+    fi
+}
+
+
+function load_images {
+    if [[ $IMAGE_LOAD_TYPE == "offline" ]]; then
+        run_command "/bin/bash crictl.sh offline_load_images $KUBE_VERSION $KUBE_NETWORK $GLOBAL_IMAGE_REPOSITORY"
+    else
+        # kubeadm config images pull --image-repository $GLOBAL_IMAGE_REPOSITORY
+        run_command "/bin/bash crictl.sh online_pull_images $KUBE_VERSION $GLOBAL_IMAGE_REPOSITORY"
+    fi
 }
 
 check_sys() {
@@ -134,39 +108,53 @@ check_sys() {
 }
 
 
+function poll_k8s_ready(){
+    # 轮询间隔时间（秒）
+    INTERVAL=3
+    # 检查 Kubernetes 集群是否安装成功的命令示例
+    CHECK_COMMAND="kubectl get nodes"
+    # 计数器
+    COUNT=0
+    # 超过10次后退出
+    if [ $COUNT -ge 10 ]; then
+        log "超过10次尝试，退出轮询。"
+        exit 1
+    fi
+    # 开始轮询
+    while [ $COUNT -lt 10 ]; do
+        # 检查输出中是否包含 "Ready" 字样，表示节点已就绪
+        if echo "$CHECK_COMMAND" | grep -q "Ready"; then
+            log "Kubernetes 集群安装成功！停止轮询。"
+            break
+        fi
+        # 增加计数器
+        ((COUNT++))
+        # 等待指定的间隔时间
+        sleep $INTERVAL
+    done
+}
+
 function init_master() {
-    log "修改Kubeadm-init配置"
+    log "初始化kubeadm-init配置"
     rm -rf kubeadm-init.yaml && cp conf/kubeadm-init-template.yaml kubeadm-init.yaml
     sed -i "s|{{GLOBAL_IMAGE_REPOSITORY}}|$GLOBAL_IMAGE_REPOSITORY|g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_ADVERTISE_ADDRESS}}/${KUBE_ADVERTISE_ADDRESS}/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_BIND_PORT}}/${KUBE_BIND_PORT}/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_TOKEN}}/${KUBE_TOKEN}/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_NODE_NAME}}/${KUBE_NODE_NAME}/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_VERSION}}/${KUBE_VERSION}/g" kubeadm-init.yaml
+    sed -i "s/{{KUBE_ADVERTISE_ADDRESS}}/$KUBE_ADVERTISE_ADDRESS/g" kubeadm-init.yaml
+    sed -i "s/{{KUBE_BIND_PORT}}/$KUBE_BIND_PORT/g" kubeadm-init.yaml
+    sed -i "s/{{KUBE_TOKEN}}/$KUBE_TOKEN/g" kubeadm-init.yaml
+    sed -i "s/{{KUBE_NODE_NAME}}/$KUBE_NODE_NAME/g" kubeadm-init.yaml
+    sed -i "s/{{KUBE_VERSION}}/$KUBE_VERSION/g" kubeadm-init.yaml
     cat kubeadm-init.yaml
     log "全局修改image-repository"
-    sed -i "s/{{GLOBAL_IMAGE_REPOSITORY}}/${GLOBAL_IMAGE_REPOSITORY}/g" addons/*.yaml
-    update_host_prompt="更新Host,并重启网络"
-    read -p "确认是否${update_host_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-    y | Y)
-        echo "$KUBE_ADVERTISE_ADDRESS k8s-master" >>/etc/hosts
-        for line in $(cat conf/hosts); do
-            sed -i "/$line/d" /etc/hosts
-        done
-        cat conf/hosts >>/etc/hosts
-        service network restart
-        log "${update_host_prompt} OK"
-        ;;
-    n | N)
-        echo "退出${update_host_prompt}" &
-        ;;
-    *)
-        echo "退出${update_host_prompt}" &
-        ;;
-    esac
+    find addons -name "*.yaml" -exec sed -i.bak 's|{{GLOBAL_IMAGE_REPOSITORY}}|'"$GLOBAL_IMAGE_REPOSITORY"'|g' {} \;
     log "初始化Kube Master"
     kubeadm init --config kubeadm-init.yaml --v=5 2>&1 | tee -a ${__current_dir}/install.log
+    poll_k8s_ready && \
+    bak_kube_config && \
+    install_network_plugin && \
+    sub_slave_rely
+}
+
+function bak_kube_config(){
     log "备份原有kube admin配置"
     kube_admin_path=" $HOME/.kube/config"
     if [ -f $kube_admin_path ]; then
@@ -178,15 +166,16 @@ function init_master() {
     chown $(id -u):$(id -g) $HOME/.kube/config
     [[ -z $(grep $KUBE_ADMIN_CONFIG_FILE ~/.bashrc) ]] && echo "export KUBECONFIG=$KUBE_ADMIN_CONFIG_FILE" >>$HOME/.bashrc
     source ~/.bashrc
-    log "开始安装$KUBE_NETWORK"
+}
+
+function install_network_plugin(){
     if [[ $KUBE_NETWORK == "flannel" ]]; then
-        run_command "/bin/bash install-addons.sh flannel"
+        log "开始安装$KUBE_NETWORK version: $FLANNEL_VERSION"
+        run_command "/bin/bash install-addons.sh flannel $FLANNEL_VERSION"
     elif [[ $KUBE_NETWORK == "calico" ]]; then
-        run_command "/bin/bash install-addons.sh calico"
+        log "开始安装$KUBE_NETWORK version: $CALICO_VERSION"
+        run_command "/bin/bash install-addons.sh calico $CALICO_VERSION"
     fi
-    log "创建Kube Node连接所需要的Token"
-    kubeadm token create --print-join-command --ttl=0 2>&1 | tee -a ${__current_dir}/install.log
-    sub_slave_rely
 }
 
 function slave_join(){
@@ -203,6 +192,8 @@ function slave_join(){
 }
 
 function sub_slave_rely(){
+    log "创建Kube Node连接所需要的Token"
+    kubeadm token create --print-join-command --ttl=0 2>&1 | tee -a ${__current_dir}/install.log
     log "开始组装slave安装包"
     rm -rf $NODE_PACKAGE_PATH
     mkdir -p $NODE_PACKAGE_PATH
@@ -267,9 +258,9 @@ while [[ $# > 0 ]];do
         echo "Options:"
         echo "   -v, --version             		Versions 1.23.3, 1.28.2 are currently supported,default=$KUBE_VERSION"
         echo "   -p, --port                		Port number for external access, default=$KUBE_BIND_PORT"
-        echo "   -addr, --advertise_address		kubectl access address"
+        echo "   -addr, --advertise_address		kubectl access address, default=$KUBE_ADVERTISE_ADDRESS"
         echo "   -tk, --token                  	token, default=$KUBE_TOKEN"
-        echo "   --hostname [hostname]          set hostname"
+        echo "   --hostname [hostname]          set hostname, default=$KUBE_NODE_NAME"
         echo "   --flannel                    	use flannel network, and set this node as master"
         echo "   --calico                     	use calico network, and set this node as master"
         echo "   --slavepath                    slave packaged path, default=$NODE_PACKAGE_PATH"
@@ -290,9 +281,12 @@ while [[ $# > 0 ]];do
 done
 
 main() {
+    prepare_work && \
     check_sys && \
     install_depend  && \
     prepare_work  && \
+    upload_hosts && \
+    load_images && \
     if [[ $IS_MASTER == 1 ]]; then
         init_master
     fi
