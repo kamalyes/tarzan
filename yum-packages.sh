@@ -4,23 +4,14 @@ source ./common.sh
 action=$1
 
 function update_repos() {
-  update_repos_prompt="更新CentoSBase Repo地址"
-  read -p "是否${update_repos_prompt}? [n/y]" __choice </dev/tty
-  case "$__choice" in
-      y | Y)
+  install_prompt="更新CentoSBase Repo地址"
+  if prompt_for_confirmation "$which_prompt" "$install_prompt"; then
     mkdir /etc/yum.repos.d/bak && mv /etc/yum.repos.d/*.repo /etc/yum.repos.d/bak
     wget -O /etc/yum.repos.d/CentOS-Base.repo http://mirrors.cloud.tencent.com/repo/centos7_base.repo
     wget -O /etc/yum.repos.d/epel.repo http://mirrors.cloud.tencent.com/repo/epel-7.repo
     yum clean all && yum makecache
     log "更新CentoSBase Repo地址成功"
-  ;;
-    n | N)
-    echo "退出${update_repos_prompt}" &
-    ;;
-    *)
-    echo "退出${update_repos_prompt}" &
-    ;;
-  esac
+  fi
 }
 
 function download_all_packages() {
@@ -46,258 +37,127 @@ function download_all_packages() {
 }
 
 function online_install_common_packages() {
-  file_path="conf/yum-packages.version"
-  for package in $(cat $file_path); do
-    log "开始在线安装常用依赖包：${package}"
-    yum -y install ${package}
-  done
+    file_path="conf/yum-packages.version"
+
+    if [ ! -f "$file_path" ] || [ ! -s "$file_path" ]; then
+        log "错误：文件不存在或内容为空: $file_path"
+    fi
+
+    while IFS= read -r package || [ -n "$package" ]; do
+        log "开始在线安装常用依赖包：${package}"
+        yum -y install "$package"
+    done < "$file_path"
 }
 
 function offline_install_dependent() {
-  log "开始离线安装常用工具包"
-  rpm -ivhU offline/base-dependence/*.rpm --nodeps --force
-  log "离线安装常用工具包完成"
+  offline_install_template "offline/base-dependence" "base-dependence"
+  check_components "unzip chrony jq telnet vim wget curl ntpdate"
 }
 
 function offline_install_conntrack() {
-  install_conntrack_prompt="离线安装Conntrack"
-  read -p "是否${install_conntrack_prompt}? [n/y]" __choice </dev/tty
-  case "$__choice" in
-      y | Y)
-    log "开始${install_conntrack_prompt}"
-    rpm -ivhU offline/conntrack/*.rpm --nodeps --force
-    log "${install_conntrack_prompt}完成"
-  ;;
-  n | N)
-  echo "退出${install_conntrack_prompt}" &
-  ;;
-  *)
-  echo "退出${install_conntrack_prompt}" &
-  ;;
-  esac
+  offline_install_template "offline/conntrack" conntrack
+  check_components conntrack
 }
 
 function offline_install_containerd() {
-  install_containerd_prompt="离线安装Containerd"
-  read -p "是否${install_containerd_prompt}? [n/y]" __choice </dev/tty
-  case "$__choice" in
-      y | Y)
-    log "开始${install_containerd_prompt}"
-    rpm -ivhU offline/containerd/*.rpm --nodeps --force
-    log "${install_containerd_prompt}完成"
-  ;;
-  n | N)
-  echo "退出${install_containerd_prompt}" &
-  ;;
-  *)
-  echo "退出${install_containerd_prompt}" &
-  ;;
-  esac
+  offline_install_template "offline/containerd" "containerd"
+  check_components containerd
 }
 
 function online_install_docker() {
-    if which docker >/dev/null; then
-      which_prompt="检测到本地已安装Docker"
-      install_docker_prompt="在线覆盖安装"
-    else
-      install_docker_prompt="在线安装Docker"
-    fi
-    read -p "${which_prompt}请确认是否${install_docker_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-    y | Y)
-      yum -y remove docker*
-      yum -y install docker-ce-24.0.7-1.el7.x86_64 \
-        docker-ce-rootless-extras-24.0.7-1.el7.x86_64 \
-        docker-ce-cli-24.0.7-1.el7.x86_64
-      if which systemctl >/dev/null; then
-        log "设置Docker开机启动"
-        systemctl enable docker --now 2>&1 | tee -a ${__current_dir}/install.log
-      fi
-      log "检查Docker服务是否正常运行"
-      docker ps -a 1>/dev/null 2>/dev/null
-      if [ $? != 0 ]; then
-        log "Docker 未正常启动，请先安装并启动 Docker 服务后再次执行本脚本"
-        exit
-      else
-        # journalctl -u docker # 查看运行日志
-        # systemctl daemon-reload && systemctl restart docker # 重载配置
-        log "${install_docker_prompt}完成"
-      fi
-    ;;
-    n | N)
-      log "退出${install_docker_prompt}"
-      ;;
-    *)
-      log "退出${install_docker_prompt}"
-      ;;
-    esac
+  if which docker >/dev/null; then
+    which_prompt="检测到本地已安装Docker"
+    install_prompt="在线覆盖安装"
+  else
+    install_prompt="在线安装Docker"
+  fi
+  if prompt_for_confirmation "$which_prompt" "$install_prompt"; then
+    yum -y remove docker*
+    yum -y install docker-ce-24.0.7-1.el7.x86_64 \
+      docker-ce-rootless-extras-24.0.7-1.el7.x86_64 \
+      docker-ce-cli-24.0.7-1.el7.x86_64
+  fi
+  enable_docker_service
 }
 
 function offline_install_docker() {
-    if which docker >/dev/null; then
-      which_prompt="检测到本地已安装Docker"
-      install_docker_prompt="离线覆盖安装"
-    else
-      install_docker_prompt="离线安装Docker"
-    fi
-    read -p "${which_prompt}请确认是否${install_docker_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-    y | Y)
-      rpm -ivhU offline/docker-before/*.rpm --nodeps --force &&\
-      rpm -ivhU offline/docker/*.rpm --nodeps --force
-      log "${install_docker_prompt}完成"
-      if which systemctl >/dev/null; then
-        log "设置Docker开机启动"
-        systemctl enable docker --now 2>&1 | tee -a ${__current_dir}/install.log
-      fi
-      log "检查Docker服务是否正常运行"
-      docker ps -a 1>/dev/null 2>/dev/null
-      if [ $? != 0 ]; then
-        log "Docker 未正常启动，请先安装并启动 Docker 服务后再次执行本脚本"
-        exit
-      else
-        # journalctl -u docker # 查看运行日志
-        systemctl daemon-reload && systemctl restart docker # 重载配置
-        log "${install_docker_prompt}完成"
-      fi
-    ;;
-    n | N)
-      log "退出${install_docker_prompt}"
-      ;;
-    *)
-      log "退出${install_docker_prompt}"
-      ;;
-    esac
+  offline_install_template "offline/docker-before" "docker"
+  offline_install_template "offline/docker" "docker"
+  enable_docker_service
 }
 
 function offline_install_kube(){
-    log "接收到传递的KUBE_VERSION参数为$KUBE_VERSION"
-    if which kubectl >/dev/null; then
-      old_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
-      which_prompt="检测到本地已安装kubectl-$old_k8s_version"
-      install_kubectl_prompt="离线覆盖安装"
-    else
-      install_kubectl_prompt="离线安装kubectl"
-    fi
-    read -p "${which_prompt}请确认是否${install_kubectl_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-        y | Y)
-        log "开始离线安装kubelet kubeadm kubectl"
-        rpm -ivhU offline/k8s/$KUBE_VERSION/*.rpm --nodeps --force
-        new_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
-        log "离线安装kubelet kubeadm kubectl OK,k8s version: $(color_echo $green $new_k8s_version)"
-        log "开始离线安装bash-completion命令补全工具"
-        rpm -ivhU offline/bash-completion/*.rpm --nodeps --force
-        log "写入bash-completion环境变量"
-        [[ -z $(grep kubectl ~/.bashrc) ]] && echo "source /usr/share/bash-completion/bash_completion && kubectl completion bash | sudo tee /etc/bash_completion.d/kubectl > /dev/null"
-        log "离线安装bash命令补全工具 OK"
-        log "设置kubelet为开机自启并现在立刻启动服务"
-        systemctl enable kubelet --now 2>&1 | tee -a ${__current_dir}/install.log
-        log "设置kubectl自启OK"
-        log "检查DockerCompose是否正常安装"
-        kubectl version 1>/dev/null 2>/dev/null
-        if [ $? != 0 ]; then
-          log "${install_kubectl_prompt}失败"
-        else
-          log "${install_kubectl_prompt}完成"
-        fi
-        ;;
-        n | N)
-        echo "退出${install_kubectl_prompt}" &
-        ;;
-        *)
-        echo "退出${install_kubectl_prompt}" &
-        ;;
-    esac
+  log "接收到传递的KUBE_VERSION参数为$KUBE_VERSION"
+  if which kubectl >/dev/null; then
+    old_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
+    which_prompt="检测到本地已安装kubectl-$old_k8s_version"
+    install_prompt="离线覆盖安装"
+  else
+    install_prompt="离线安装kubectl"
+  fi
+  if prompt_for_confirmation "$which_prompt" "$install_prompt"; then
+      log "开始离线安装kubelet kubeadm kubectl"
+      rpm -ivhU offline/k8s/$KUBE_VERSION/*.rpm --nodeps --force
+      new_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
+      log "离线安装kubelet kubeadm kubectl OK,k8s version: $(color_echo $green $new_k8s_version)"
+      log "开始离线安装bash-completion命令补全工具"
+      rpm -ivhU offline/bash-completion/*.rpm --nodeps --force
+      log "写入bash-completion环境变量"
+      [[ -z $(grep kubectl ~/.bashrc) ]] && echo "source /usr/share/bash-completion/bash_completion && kubectl completion bash | sudo tee /etc/bash_completion.d/kubectl > /dev/null"
+      log "离线安装bash命令补全工具 OK"
+  fi
+  enable_kube_service
 }
 
 function offline_install_cni(){
-    install_cni_prompt="离线安装cni"
-    read -p "请确认是否${install_cni_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-        y | Y)
-         cni_install_path="/opt/cni/bin"
-        cni_version="v1.4.0"
-        log "开始${install_cni_prompt}-$cni_version"
-        rm -rf  $cni_install_path  && mkdir -p $cni_install_path && tar zxvf offline/cni/cni-plugins-linux-amd64-$cni_version.tgz -C $cni_install_path
-        log "${install_cni_prompt}-${cni_version} OK"
-        ;;
-        n | N)
-        echo "退出${install_cni_prompt}" &
-        ;;
-        *)
-        echo "退出${install_cni_prompt}" &
-        ;;
-    esac
+    install_prompt="离线安装cni"
+    if prompt_for_confirmation "$which_prompt" "$install_prompt"; then
+      cni_install_path="/opt/cni/bin"
+      cni_version="v1.4.0"
+      log "开始${install_prompt}-$cni_version"
+      rm -rf  $cni_install_path  && mkdir -p $cni_install_path && tar zxvf offline/cni/cni-plugins-linux-amd64-$cni_version.tgz -C $cni_install_path
+      log "${install_prompt}-${cni_version} OK"
+    fi
 }
 
 function online_install_docker() {
-    if which docker >/dev/null; then
-      which_prompt="检测到本地已安装Docker"
-      install_docker_prompt="在线覆盖安装"
-    else
-      install_docker_prompt="在线安装Docker"
-    fi
-    read -p "${which_prompt}请确认是否${install_docker_prompt}? [n/y]" __choice </dev/tty
-    case "$__choice" in
-    y | Y)
-      yum -y remove docker*
-      yum -y install docker-ce-24.0.7-1.el7.x86_64 \
-        docker-ce-rootless-extras-24.0.7-1.el7.x86_64 \
-        docker-ce-cli-24.0.7-1.el7.x86_64
-      if which systemctl >/dev/null; then
-        log "设置Docker开机启动"
-        systemctl enable docker --now 2>&1 | tee -a ${__current_dir}/install.log
-      fi
-      log "检查Docker服务是否正常运行"
-      docker ps -a 1>/dev/null 2>/dev/null
-      if [ $? != 0 ]; then
-        log "Docker 未正常启动，请先安装并启动 Docker 服务后再次执行本脚本"
-        exit
-      else
-        # journalctl -u docker # 查看运行日志
-        # systemctl daemon-reload && systemctl restart docker # 重载配置
-        log "${install_docker_prompt}完成"
-      fi
-    ;;
-    n | N)
-      log "退出${install_docker_prompt}"
-      ;;
-    *)
-      log "退出${install_docker_prompt}"
-      ;;
-    esac
+  if which docker >/dev/null; then
+    which_prompt="检测到本地已安装Docker"
+    install_prompt="在线覆盖安装"
+  else
+    install_prompt="在线安装Docker"
+  fi
+  if prompt_for_confirmation "$which_prompt" "$install_prompt"; then
+    yum -y remove docker*
+    yum -y install docker-ce-24.0.7-1.el7.x86_64 \
+      docker-ce-rootless-extras-24.0.7-1.el7.x86_64 \
+      docker-ce-cli-24.0.7-1.el7.x86_64
+    log "${install_prompt}完成"
+  fi
+  enable_docker_service
 }
 
 function offline_install_dockercompose() {
   if which docker-compose >/dev/null; then
       which_prompt="检测到本地已安装DockerCompose"
-      install_dockercompose_prompt="离线覆盖安装"
+      install_prompt="离线覆盖安装"
   else
-      install_dockercompose_prompt="离线安装DockerCompose"
+      install_prompt="离线安装DockerCompose"
   fi
-  read -p "${which_prompt}请确认是否${install_dockercompose_prompt}? [n/y]" __choice </dev/tty
-  case "$__choice" in
-    y | Y)
-      DOCKER_COMPOSE_VERSION=$(echo $(uname -s)-$(uname -m) | tr '[A-Z]' '[a-z]') 
-      cp offline/docker-compose/docker-compose-${DOCKER_COMPOSE_VERSION} /usr/local/bin/docker-compose
-      #给他一个执行权限
-      chmod +x /usr/local/bin/docker-compose
-      log "检查DockerCompose是否正常安装"
-      docker-compose version 1>/dev/null 2>/dev/null
-      if [ $? != 0 ]; then
-        log "${install_dockercompose_prompt}失败"
-      else
-        log "${install_dockercompose_prompt}完成"
-      fi
-    ;;
-    n | N)
-      log "退出${install_dockercompose_prompt}"
-      ;;
-    *)
-      log "退出${install_dockercompose_prompt}"
-      ;;
-  esac
+  if prompt_for_confirmation "$which_prompt" "$install_prompt"; then
+    DOCKER_COMPOSE_VERSION=$(echo $(uname -s)-$(uname -m) | tr '[A-Z]' '[a-z]') 
+    cp offline/docker-compose/docker-compose-${DOCKER_COMPOSE_VERSION} /usr/local/bin/docker-compose
+    #给他一个执行权限
+    chmod +x /usr/local/bin/docker-compose
+    log "检查DockerCompose是否正常安装"
+    docker-compose version 1>/dev/null 2>/dev/null
+    if [ $? != 0 ]; then
+      log "${install_prompt}失败"
+    else
+      log "${install_prompt}完成"
+    fi
+  fi
+  check_component docker-compose
 }
 
 
@@ -344,6 +204,9 @@ function main_entrance() {
     ;;
   offline_install_cni)
     offline_install_cni
+    ;;
+  download_all_packages)
+    download_all_packages
     ;;
   esac
 }
