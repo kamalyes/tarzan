@@ -442,7 +442,7 @@ spec:
               fieldPath: metadata.namespace
         - name: LD_PRELOAD
           value: /usr/local/lib/libmimalloc.so
-        image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-nginx-ingress-controller:v1.9.5
+        image: {{ADDONS_IMAGE_REPOSITORY}}/kube-nginx-ingress-controller:v1.9.5
         imagePullPolicy: IfNotPresent
         lifecycle:
           preStop:
@@ -543,7 +543,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-webhook-certgen:v20231011-8b53cabe0
+        image: {{ADDONS_IMAGE_REPOSITORY}}/kube-webhook-certgen:v20231011-8b53cabe0
         imagePullPolicy: IfNotPresent
         name: create
         securityContext:
@@ -596,7 +596,7 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-webhook-certgen:v20231011-8b53cabe0
+        image: {{ADDONS_IMAGE_REPOSITORY}}/kube-webhook-certgen:v20231011-8b53cabe0
         imagePullPolicy: IfNotPresent
         name: patch
         securityContext:

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: kube-grayscale
+  name: kube-weight-demo
+  labels:
+    app: kube-weight-demo
+    dce.daocloud.io/app: kube-weight-demo
+  annotations:
+    deployment.kubernetes.io/revision: '5'
+    kubernetes.io/change-cause: update YAML
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-weight-demo
+  template:
+    metadata:
+      labels:
+        app: kube-weight-demo
+        dce.daocloud.io/app: kube-weight-demo
+        dce.daocloud.io/component: kube-weight-demo
+      annotations:
+        dce.daocloud.io/parcel.egress.burst: '0'
+        dce.daocloud.io/parcel.egress.rate: '0'
+        dce.daocloud.io/parcel.ingress.burst: '0'
+        dce.daocloud.io/parcel.ingress.rate: '0'
+        dce.daocloud.io/parcel.net.value: default-ipv4-ippool
+    spec:
+      containers:
+      - name: kube-weight-demo
+        command: ["./main","-v","weight"]
+        imagePullPolicy: Always
+        image: kamalyes/kube-grayscale-release:weight
+        resources:
+            limits:
+              cpu: 500m
+              memory: '314572800'
+            requests:
+              cpu: 200m
+              memory: '314572800'
+        ports:
+        - containerPort: 8080

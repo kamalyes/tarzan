@@ -18,8 +18,6 @@ nodeRegistration:
   taints: null
 
 ---
-apiServer:
-  timeoutForControlPlane: 4m0s
 apiVersion: kubeadm.k8s.io/v1beta3
 certificatesDir: /etc/kubernetes/pki
 clusterName: kubernetes
@@ -34,9 +32,11 @@ kind: ClusterConfiguration
 kubernetesVersion: {{KUBE_VERSION}}
 networking:
   dnsDomain: cluster.local
-  serviceSubnet: 10.96.0.0/12
-  podSubnet: 172.22.0.0/16
+  serviceSubnet: {{KUBE_SERVICE_SUBNET}}
+  podSubnet: {{KUBE_POD_SUBNET}}
 scheduler: {}
+apiServer:
+  timeoutForControlPlane: 4m0s
 
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1

@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: kube-grayscale
+  name: kube-green-demo
+  labels:
+    app: kube-green-demo
+    dce.daocloud.io/app: kube-green-demo
+  annotations:
+    deployment.kubernetes.io/revision: '5'
+    kubernetes.io/change-cause: update YAML
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-green-demo
+  template:
+    metadata:
+      labels:
+        app: kube-green-demo
+        dce.daocloud.io/app: kube-green-demo
+        dce.daocloud.io/component: kube-green-demo
+      annotations:
+        dce.daocloud.io/parcel.egress.burst: '0'
+        dce.daocloud.io/parcel.egress.rate: '0'
+        dce.daocloud.io/parcel.ingress.burst: '0'
+        dce.daocloud.io/parcel.ingress.rate: '0'
+        dce.daocloud.io/parcel.net.value: default-ipv4-ippool
+    spec:
+      containers:
+      - name: kube-green-demo
+        command: ["./main","-v","green"]
+        imagePullPolicy: Always
+        image: kamalyes/kube-grayscale-release:green
+        resources:
+            limits:
+              cpu: 500m
+              memory: '314572800'
+            requests:
+              cpu: 200m
+              memory: '314572800'
+        ports:
+        - containerPort: 8080

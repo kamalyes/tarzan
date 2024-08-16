@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: kube-grayscale
+  name: kube-flow-canary
+  labels:
+    dce.daocloud.io/app: kube-flow-demo
+  annotations:
+    # 开启Canary。
+    nginx.ingress.kubernetes.io/canary: 'true'
+    nginx.ingress.kubernetes.io/canary-by-header: X-Forwarded-For
+    # 假设客户端来源IP为123.156.789.123
+    nginx.ingress.kubernetes.io/canary-by-header-value: 123.156.789.123
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kube.teal.com
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: kube-flow-demo-svc
+            port:
+              number: 8080

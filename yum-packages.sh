@@ -51,7 +51,7 @@ function online_install_common_packages() {
 
 function offline_install_dependent() {
   offline_install_template "offline/base-dependence" "base-dependence"
-  check_components "unzip chrony jq telnet vim wget curl ntpdate"
+  check_components "unzip" "chronyd" "jq" "telnet" "vim" "wget" "curl" "ntpdate"
 }
 
 function offline_install_conntrack() {
@@ -62,6 +62,7 @@ function offline_install_conntrack() {
 function offline_install_containerd() {
   offline_install_template "offline/containerd" "containerd"
   check_components containerd
+  systemctl enable containerd --now
 }
 
 function online_install_docker() {
@@ -81,7 +82,7 @@ function online_install_docker() {
 }
 
 function offline_install_docker() {
-  offline_install_template "offline/docker-before" "docker"
+  offline_install_template "offline/docker-before" "docker-before"
   offline_install_template "offline/docker" "docker"
   enable_docker_service
 }
@@ -157,15 +158,25 @@ function offline_install_dockercompose() {
       log "${install_prompt}完成"
     fi
   fi
-  check_component docker-compose
+  check_components docker-compose
 }
 
-
 function offline_install_public_dependency() {
-  offline_install_dependent && \
-  offline_install_containerd && \
-  offline_install_conntrack && \
+  set -e  # 启用错误检查
+
+  trap 'echo "An error occurred. Exiting."; exit 1;' ERR
+
+  offline_install_dependent
+  echo "Dependent installed successfully."
+
+  offline_install_containerd
+  echo "Containerd installed successfully."
+
+  offline_install_conntrack
+  echo "Conntrack installed successfully."
+
   offline_install_cni
+  echo "CNI installed successfully."
 }
 
 function main_entrance() {

@@ -26,16 +26,20 @@ KUBE_ADVERTISE_ADDRESS=$(cat /etc/hosts | grep localhost | awk '{print $1}' | aw
 KUBE_BIND_PORT="6443"
 KUBE_TOKEN="tarzan.e6fa0b76a6898af7"
 NODE_PACKAGE_PATH="kube_slave"
+ADDONS_IMAGE_REPOSITORY="registry.cn-shenzhen.aliyuncs.com/isimetra"
 GLOBAL_IMAGE_REPOSITORY="registry.cn-hangzhou.aliyuncs.com/google_containers"
 IMAGE_LOAD_TYPE="offline"
 KUBE_ADMIN_CONFIG_FILE="/etc/kubernetes/admin.conf"
 KUBE_NODE_NAME="k8s-master"
 KUBE_NETWORK="flannel"
 KUBE_PAUSE_VERSION="3.6"
+CONTAINERD_TIME_OUT="4h0m0s"
+KUBE_POD_SUBNET="172.22.0.0/16"
+KUBE_SERVICE_SUBNET="10.96.0.0/12"
 
 FLANNEL_VERSION="0.24.0"
 CALICO_VERSION="3.26.1"
-DASHBOARD_VERSION="2.7.0"
+DASHBOARD_VERSION="2.5.1"
 INGRESS_NGINX_VERSION="1.9.5"
 METRICS_VERSION="0.6.4"
 STATE_METRICS_STANDARD_VERSION="2.10.0"
@@ -43,7 +47,7 @@ STATE_METRICS_STANDARD_VERSION="2.10.0"
 IMAGE_FILE_PATH="offline/images/images.lock"
 
 function log() {
-    message="[Tarzan Log]: $1 "
+    message="[Tarzan Log]: $(date +'%Y-%m-%d %H:%M:%S') -  $1 "
     echo -e "\033[32m## ${message} \033[0m\n" 2>&1 | tee -a ${__CURRENT_DIR}/install.log
 }
 
@@ -52,7 +56,6 @@ function color_echo() {
 }
 
 function run_command() {
-    echo ""
     local command=$1
     color_echo "$command"
     echo $command | bash
@@ -101,10 +104,10 @@ function prompt_for_confirmation() {
 }
 
 function enable_docker_service() {
-    check_component docker
+    check_components docker
     if which systemctl >/dev/null; then
       log "设置Docker开机启动"
-      systemctl enable docker --now 2>&1 | tee -a ${__current_dir}/install.log
+      systemctl enable docker --now
     fi
     log "检查Docker服务是否正常运行"
     # 检查Docker是否启动
@@ -114,31 +117,67 @@ function enable_docker_service() {
     else
         # 重载配置并重启Docker服务
         # journalctl -u docker # 查看运行日志
-        systemctl daemon-reload
         systemctl restart docker
         log "Docker服务已重启完成"
     fi
 }
 
 function check_components() {
-    for component in "$@"; do
-        log "检查$component 状态是否正常"
-        if which "$component" > /dev/null; then
+    local components=("$@")
+    local all_ok=true
+    for component in "${components[@]}"; do
+        log "检查 $component 状态是否正常"
+        if command -v "$component" > /dev/null; then
             log "$component 状态正常"
         else
             log "$component 状态异常"
-            return 1
+            all_ok=false
         fi
     done
-}
 
+    # 根据检查结果返回状态
+    if [ "$all_ok" = true ]; then
+        log "所有组件状态正常"
+        return 0
+    else
+        log "某些组件状态异常"
+        return 1
+    fi
+}
 
 function enable_kube_service() {
     log "设置kubelet为开机自启并现在立刻启动服务"
-    systemctl enable kubelet --now 2>&1 | tee -a ${__current_dir}/install.log
+    systemctl enable kubelet --now
     log "设置kubelet自启完成"
-    check_component kubectl kubelet kubeadm
+    check_components kubectl kubelet kubeadm
 }
+
+
+function retry() {
+    local command="$1"
+    local max_attempts="$2"
+    local interval="$3"
+    local count=0
+
+    while [ $count -lt $max_attempts ]; do
+        # 执行命令并捕获输出
+        OUTPUT=$($command 2>&1)
+
+        # 检查输出中是否包含 "Ready"
+        if echo "$OUTPUT" | grep -q "Ready"; then
+            return 0  # 成功，返回0
+        fi
+
+        # 增加计数器
+        ((count++))
+        log "第 $count 次尝试, 等待 $interval 秒后重试..."
+        sleep $interval
+    done
+
+    # 超过最大尝试次数后返回1
+    return 1
+}
+
 
 
 function main_entrance() {

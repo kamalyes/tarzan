@@ -96,7 +96,7 @@ data:
     }
   net-conf.json: |
     {
-      "Network": "172.22.0.0/16",
+      "Network": "{{KUBE_POD_SUBNET}}",
       "Backend": {
         "Type": "vxlan"
       }
@@ -138,7 +138,7 @@ spec:
       serviceAccountName: flannel
       initContainers:
       - name: install-cni-plugin
-        image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-flannel-cni-plugin:v1.2.0
+        image: {{ADDONS_IMAGE_REPOSITORY}}/kube-flannel-cni-plugin:v1.2.0
         command:
         - cp
         args:
@@ -149,7 +149,7 @@ spec:
         - name: cni-plugin
           mountPath: /opt/cni/bin
       - name: install-cni
-        image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-flannel:v0.24.0
+        image: {{ADDONS_IMAGE_REPOSITORY}}/kube-flannel:v0.24.0
         command:
         - cp
         args:
@@ -163,7 +163,7 @@ spec:
           mountPath: /etc/kube-flannel/
       containers:
       - name: kube-flannel
-        image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-flannel:v0.24.0
+        image: {{ADDONS_IMAGE_REPOSITORY}}/kube-flannel:v0.24.0
         command:
         - /opt/bin/flanneld
         args:

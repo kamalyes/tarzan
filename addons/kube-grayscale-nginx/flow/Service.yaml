@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: kube-grayscale
+  name: kube-flow-demo-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: kube-flow-demo
+  ports:
+    - port: 8080
+      targetPort: 8080

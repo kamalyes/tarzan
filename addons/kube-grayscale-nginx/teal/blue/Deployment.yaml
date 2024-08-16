@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: kube-grayscale
+  name: kube-blue-demo
+  labels:
+    app: kube-blue-demo
+    dce.daocloud.io/app: kube-blue-demo
+  annotations:
+    deployment.kubernetes.io/revision: '5'
+    kubernetes.io/change-cause: update YAML
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-blue-demo
+  template:
+    metadata:
+      labels:
+        app: kube-blue-demo
+        dce.daocloud.io/app: kube-blue-demo
+        dce.daocloud.io/component: kube-blue-demo
+      annotations:
+        dce.daocloud.io/parcel.egress.burst: '0'
+        dce.daocloud.io/parcel.egress.rate: '0'
+        dce.daocloud.io/parcel.ingress.burst: '0'
+        dce.daocloud.io/parcel.ingress.rate: '0'
+        dce.daocloud.io/parcel.net.value: default-ipv4-ippool
+    spec:
+      containers:
+      - name: kube-blue-demo
+        command: ["./main","-v","blue"]
+        imagePullPolicy: Always
+        image: kamalyes/kube-grayscale-release:blue
+        resources:
+            limits:
+              cpu: 500m
+              memory: '314572800'
+            requests:
+              cpu: 200m
+              memory: '314572800'
+        ports:
+        - containerPort: 8080

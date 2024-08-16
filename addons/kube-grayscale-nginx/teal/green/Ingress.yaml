@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: kube-grayscale
+  name: kube-green-canary
+  labels:
+    dce.daocloud.io/app: kube-green-demo
+  annotations:
+    nginx.ingress.kubernetes.io/canary: 'true'
+    nginx.ingress.kubernetes.io/canary-by-header: env
+    nginx.ingress.kubernetes.io/canary-by-header-pattern: green
+    # 按Cookies
+    # nginx.ingress.kubernetes.io/canary-by-header: Cookie
+    # nginx.ingress.kubernetes.io/canary-by-header-pattern: bu=xxxcn|bu=xxxsg
+    nginx.ingress.kubernetes.io/ssl-passthrough: "false"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/limit-whitelist: 10.0.0.0/24,172.10.0.1
+    # 每个 IP 每秒可以访问 500 次
+    nginx.ingress.kubernetes.io/limit-rps: "500"
+    nginx.ingress.kubernetes.io/limit-connections: "1"
+    # 为计算限速漏桶算法的 burst size，和 limit-rps 的相乘系数
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "500"
+    # 配合 limit-window 表示全局限速 100 次每秒（需要依赖 memcached）
+    # nginx.ingress.kubernetes.io/global-rate-limit: "100"
+    # nginx.ingress.kubernetes.io/global-rate-limit-window: 1s
+    # 限制发送给后端服务的发送速率为 1MB 每秒
+    nginx.ingress.kubernetes.io/limit-rate: "1024"
+    # 发送给后端服务的前 10MB 数据不进行限速
+    nginx.ingress.kubernetes.io/limit-rate-after: "10240"
+    # 超出后的响应码
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+        limit_req_status 429;
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kube.teal.com
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: kube-green-demo-svc
+            port:
+              number: 8080

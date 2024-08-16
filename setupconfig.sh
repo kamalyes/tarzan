@@ -6,59 +6,60 @@ action=$1
 function source_chrony() {
   log "配置chrony同步源"
   cat <<EOF >/etc/chrony.conf
-  server ntp1.aliyun.com iburst
-  server ntp2.aliyun.com iburst
-  server ntp3.aliyun.com iburst
-  server ntp4.aliyun.com iburst
-  server ntp5.aliyun.com iburst
-  server ntp6.aliyun.com iburst
-  server ntp7.aliyun.com iburst
+server ntp1.aliyun.com iburst
+server ntp2.aliyun.com iburst
+server ntp3.aliyun.com iburst
+server ntp4.aliyun.com iburst
+server ntp5.aliyun.com iburst
+server ntp6.aliyun.com iburst
+server ntp7.aliyun.com iburst
 EOF
-  systemctl restart chronyd.service
+  log "重启chronyd"
   chronyc sources -v
+  systemctl restart chronyd.service
 }
 
 function update_kubernetes_conf() {
   log "配置Kubernetes镜像源"
   cat <<EOF >/etc/yum.repos.d/kubernetes.repo
-  [kubernetes]
-  name=Kubernetes
-  baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
-  enabled=1
-  gpgcheck=1
-  repo_gpgcheck=0
-  gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
-        https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+[kubernetes]
+name=Kubernetes
+baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
+      https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
 EOF
 
   log "更新kubernetes.conf"
   mkdir -p /etc/sysctl.d
   chmod 751 -R /etc/sysctl.d
   cat <<EOF >/etc/sysctl.d/kubernetes.conf
-  # 开启数据包转发功能（实现vxlan）
-  net.ipv4.ip_forward=1
-  # iptables对bridge的数据进行处理
-  net.bridge.bridge-nf-call-iptables=1
-  net.bridge.bridge-nf-call-ip6tables=1
-  net.bridge.bridge-nf-call-arptables=1
-  # 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通
-  net.ipv4.tcp_tw_recycle=0
-  # 不允许将TIME-WAIT sockets重新用于新的TCP连接
-  net.ipv4.tcp_tw_reuse=0
-  # socket监听(listen)的backlog上限
-  net.core.somaxconn=32768
-  # 最大跟踪连接数,默认 nf_conntrack_buckets * 4
-  net.netfilter.nf_conntrack_max=1000000
-  # 禁止使用 swap 空间,只有当系统 OOM 时才允许使用它
-  vm.swappiness=0
-  # 计算当前的内存映射文件数。
-  vm.max_map_count=655360
-  # 内核可分配的最大文件数
-  fs.file-max=6553600
-  # 持久连接
-  net.ipv4.tcp_keepalive_time=600
-  net.ipv4.tcp_keepalive_intvl=30
-  net.ipv4.tcp_keepalive_probes=10
+# 开启数据包转发功能（实现vxlan）
+net.ipv4.ip_forward=1
+# iptables对bridge的数据进行处理
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.bridge.bridge-nf-call-arptables=1
+# 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通
+net.ipv4.tcp_tw_recycle=0
+# 不允许将TIME-WAIT sockets重新用于新的TCP连接
+net.ipv4.tcp_tw_reuse=0
+# socket监听(listen)的backlog上限
+net.core.somaxconn=32768
+# 最大跟踪连接数,默认 nf_conntrack_buckets * 4
+net.netfilter.nf_conntrack_max=1000000
+# 禁止使用 swap 空间,只有当系统 OOM 时才允许使用它
+vm.swappiness=0
+# 计算当前的内存映射文件数。
+vm.max_map_count=655360
+# 内核可分配的最大文件数
+fs.file-max=6553600
+# 持久连接
+net.ipv4.tcp_keepalive_time=600
+net.ipv4.tcp_keepalive_intvl=30
+net.ipv4.tcp_keepalive_probes=10
 EOF
   sysctl -p /etc/sysctl.d/kubernetes.conf
 
@@ -121,14 +122,14 @@ function update_ipvs_conf() {
 function update_k8s_module_conf() {
   log "添加需要加载的模块写入脚本文件"
   cat <<EOF >/etc/modules-load.d/k8s-modules.conf
-  ip_vs
-  ip_vs_rr
-  ip_vs_wrr
-  ip_vs_sh
-  nf_conntrack
-  nf_conntrack_ipv4
-  br_netfilter
-  overlay
+ip_vs
+ip_vs_rr
+ip_vs_wrr
+ip_vs_sh
+nf_conntrack
+nf_conntrack_ipv4
+br_netfilter
+overlay
 EOF
   systemctl enable systemd-modules-load
   systemctl restart systemd-modules-load
@@ -136,11 +137,13 @@ EOF
   log "设置kubernetes-accounting"
   mkdir -p /etc/systemd/system.conf.d
   cat <<EOF >/etc/systemd/system.conf.d/kubernetes-accounting.conf
-  [Manager]
-  DefaultCPUAccounting=yes
-  DefaultMemoryAccounting=yes
+[Manager]
+DefaultCPUAccounting=yes
+DefaultMemoryAccounting=yes
 EOF
-  systemctl daemon-reload && systemctl restart kubelet
+  systemctl daemon-reload
+  log "重启kubelet"
+  systemctl restart kubelet
 }
 
 function update_limits_conf() {
@@ -163,7 +166,7 @@ imports = []
 oom_score = 0
 plugin_dir = ""
 required_plugins = []
-root = "/approot1/data/containerd"
+root = "/data/containerd"
 state = "/run/containerd"
 version = 2
 
@@ -178,7 +181,7 @@ version = 2
   uid = 0
 
 [grpc]
-  address = "var/run/containerd/containerd.sock"
+  address = "run/containerd/containerd.sock"
   gid = 0
   max_recv_message_size = 16777216
   max_send_message_size = 16777216
@@ -216,7 +219,7 @@ version = 2
     sandbox_image = "$GLOBAL_IMAGE_REPOSITORY/pause:$KUBE_PAUSE_VERSION"
     selinux_category_range = 1024
     stats_collect_period = 10
-    stream_idle_timeout = "4h0m0s"
+    stream_idle_timeout = "${CONTAINERD_TIME_OUT}"
     stream_server_address = "127.0.0.1"
     stream_server_port = "0"
     systemd_cgroup = false
@@ -296,7 +299,7 @@ version = 2
 
       [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
         [plugins."io.containerd.grpc.v1.cri".registry.mirrors."k8s.gcr.io"]
-          endpoint = ["https://registry.cn-hangzhou.aliyuncs.com/google_containers"]
+          endpoint = ["https://$GLOBAL_IMAGE_REPOSITORY"]
 
     [plugins."io.containerd.grpc.v1.cri".x509_key_pair_streaming]
       tls_cert_file = ""
@@ -378,16 +381,14 @@ version = 2
   uid = 0
 EOF
 
-  crictl config runtime-endpoint "unix:///var/run/containerd/containerd.sock"
-
    cat <<EOF >/etc/crictl.yaml
-runtime-endpoint: unix:///var/run/containerd/containerd.sock
-image-endpoint: unix:///var/run/containerd/containerd.sock
+runtime-endpoint: "unix:///var/run/containerd/containerd.sock"
+image-endpoint: ""
 timeout: 0
 debug: false
 pull-image-on-create: false
+disable-pull-on-run: false
 EOF
-
   log "重启containerd"
   systemctl restart containerd
 }
@@ -431,9 +432,11 @@ function main_entrance() {
   update_containerd_conf)
     GLOBAL_IMAGE_REPOSITORY=$2
     KUBE_PAUSE_VERSION=$3
+    CONTAINERD_TIME_OUT=$4
     log "Update Containerd Conf
         Image Repository: $GLOBAL_IMAGE_REPOSITORY
         pause version: $KUBE_PAUSE_VERSION
+        timeout: $CONTAINERD_TIME_OUT
         "
     update_containerd_conf
     ;;

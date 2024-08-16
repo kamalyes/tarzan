@@ -13,7 +13,7 @@ EXPORT_DIR=$1
 mkdir -p "$EXPORT_DIR"
 
 # 获取所有的镜像并导出
-IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}}')
+IMAGES=$(docker images  --format '{{.Repository}}:{{.Tag}}'  | grep $2)
 
 # 遍历所有的镜像
 for IMAGE in $IMAGES; do

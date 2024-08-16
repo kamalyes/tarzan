@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: kube-grayscale
+  name: kube-flow-demo
+  labels:
+    app: kube-flow-demo
+    dce.daocloud.io/app: kube-flow-demo
+  annotations:
+    deployment.kubernetes.io/revision: '5'
+    kubernetes.io/change-cause: update YAML
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-flow-demo
+  template:
+    metadata:
+      labels:
+        app: kube-flow-demo
+        dce.daocloud.io/app: kube-flow-demo
+        dce.daocloud.io/component: kube-flow-demo
+      annotations:
+        dce.daocloud.io/parcel.egress.burst: '0'
+        dce.daocloud.io/parcel.egress.rate: '0'
+        dce.daocloud.io/parcel.ingress.burst: '0'
+        dce.daocloud.io/parcel.ingress.rate: '0'
+        dce.daocloud.io/parcel.net.value: default-ipv4-ippool
+    spec:
+      containers:
+      - name: kube-flow-demo
+        command: ["./main","-v","flow"]
+        imagePullPolicy: Always
+        image: kamalyes/kube-grayscale-release:flow
+        resources:
+            limits:
+              cpu: 500m
+              memory: '314572800'
+            requests:
+              cpu: 200m
+              memory: '314572800'
+        ports:
+        - containerPort: 8080

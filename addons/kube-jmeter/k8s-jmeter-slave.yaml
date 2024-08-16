@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: kube-jmeter
+  name: jmeter-slaves
+  labels:
+    jmeter_mode: slave
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      jmeter_mode: slave
+  template:
+    metadata:
+      namespace: kube-jmeter
+      labels:
+        jmeter_mode: slave
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: jmeter_mode
+                  operator: In
+                  values:
+                  - slave
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: jmslave
+        image: kamalyes/jmeter:5.5-plugins-11-jdk@sha256:4d2f007c108b944b0283afa76d2cb94f2b808999e425978b10829d7e2afd1c7a
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: TZ
+            value: Asia/Shanghai       
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh","-c","mkdir -p /jmeter/jmx"]
+        command: 
+          - "jmeter-server"
+          - "-Dserver.rmi.localport=50000"
+          - "-Dserver_port=1099"
+          - "-Jserver.rmi.ssl.disable=true"
+        ports:
+        - containerPort: 1099
+        - containerPort: 50000
+        resources:
+          limits:
+            cpu: 1
+          requests:
+            cpu: 0.5
+            memory: 0.5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: kube-jmeter
+  name: jmeter-slaves-svc
+  labels:
+    jmeter_mode: slave
+spec:
+  clusterIP: None
+  ports:
+    - port: 1099
+      name: first
+      targetPort: 1099
+    - port: 50000
+      name: second
+      targetPort: 50000
+  selector:
+    jmeter_mode: slave

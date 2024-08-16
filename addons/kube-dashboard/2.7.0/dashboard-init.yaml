@@ -189,7 +189,7 @@ spec:
     spec:
       containers:
         - name: kube-dashboard
-          image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-dashboard:v2.7.0
+          image: {{ADDONS_IMAGE_REPOSITORY}}/kube-dashboard:v2.7.0
           imagePullPolicy: Always
           ports:
             - containerPort: 8443
@@ -273,7 +273,7 @@ spec:
     spec:
       containers:
         - name: dashboard-metrics-scraper
-          image: {{GLOBAL_IMAGE_REPOSITORY}}/kube-metrics-scraper:v1.0.4
+          image: {{ADDONS_IMAGE_REPOSITORY}}/kube-metrics-scraper:v1.0.4
           ports:
             - containerPort: 8000
               protocol: TCP

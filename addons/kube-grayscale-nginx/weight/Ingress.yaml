@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: kube-grayscale
+  name: kube-weight-canary
+  labels:
+    dce.daocloud.io/app: kube-weight-demo
+  annotations:
+    # 开启Canary。
+    nginx.ingress.kubernetes.io/canary: 'true'
+    # 将20%的流量转发到新版本
+    nginx.ingress.kubernetes.io/canary-weight: "30"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kube.teal.com
+    http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: kube-weight-demo-svc
+            port:
+              number: 8080
