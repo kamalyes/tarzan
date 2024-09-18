@@ -142,7 +142,7 @@ function init_master() {
     find addons -name "*.yaml" -exec sed -i.bak 's|{{ADDONS_IMAGE_REPOSITORY}}|'"$ADDONS_IMAGE_REPOSITORY"'|g' {} \;
     find addons -name "*.yaml" -exec sed -i.bak 's|{{GLOBAL_IMAGE_REPOSITORY}}|'"$GLOBAL_IMAGE_REPOSITORY"'|g' {} \;
     log "初始化Kube Master"
-    kubeadm init --config kubeadm-init.yaml --v=5 2>&1 | tee -a ${__current_dir}/install.log && \
+    kubeadm init --config kubeadm-init.yaml --kubelet-extra-args 'timezone=Asia/Shanghai' --v=5 2>&1 | tee -a ${__current_dir}/install.log && \
     bak_kube_config && \
     install_network_plugin && \
     poll_k8s_ready && \

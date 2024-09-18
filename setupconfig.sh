@@ -4,6 +4,7 @@ source ./common.sh
 action=$1
 
 function source_chrony() {
+  timedatectl set-timezone $KUBE_TIME_ZONE
   log "配置chrony同步源"
   cat <<EOF >/etc/chrony.conf
 server ntp1.aliyun.com iburst
@@ -15,8 +16,8 @@ server ntp6.aliyun.com iburst
 server ntp7.aliyun.com iburst
 EOF
   log "重启chronyd"
-  chronyc sources -v
   systemctl restart chronyd.service
+  chronyc sources -v
 }
 
 function update_kubernetes_conf() {

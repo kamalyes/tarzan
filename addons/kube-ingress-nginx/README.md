@@ -25,24 +25,13 @@ Ingress 是 Kubernetes 中的一种资源类型，用于管理和配置集群中
 假设你的私钥文件名为`tls.key`，证书文件名为`tls.crt`，可以使用以下命令创建`Secret`：
 
 ```bash
-ingress-ssl tls.key自己签名(https://blog.csdn.net/a807557328/article/details/114223840)
-自签名TLS密钥对用于配置Ingress以使用自定义域名通过HTTPS提供服务。以下是如何生成自签名TLS密钥对的步骤和示例代码：
-
-生成私钥（tls.key）:
-openssl genrsa -out tls.key 2048
-使用私钥生成证书签名请求（CSR）（tls.csr）:
-# openssl req -new -key tls.key -out tls.csr -subj "/C=CN/ST=GD/L=SZ/O=Dev/OU=Dev/CN=kamalyes.com/emailAddress=kamalyes.com"
-openssl req -new -key tls.key -out tls.csr
-在执行上述命令时，系统会提示您输入证书的信息。您需要填写“Common Name”字段，这应该是您的自定义域名。
-
-生成自签名证书（tls.crt）:
-
-openssl x509 -req -days 365 -in tls.csr -signkey tls.key -out tls.crt
-现在，您应该有了tls.key（私钥）和tls.crt（证书），可以在Ingress资源定义中使用。
-```
-
-```bash
-kubectl create secret tls example-tls-secret --key tls.key --cert tls.crt -n kube-example
+# https://kubernetes.github.io/ingress-nginx/user-guide/tls/
+KEY_FILE=tls.key && \
+CERT_FILE=tls.crt && \
+CERT_NAME=example-tls-secret && \
+openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout ${KEY_FILE} -out ${CERT_FILE} -config openssl.cnf && \
+openssl x509 -in ${CERT_FILE} -text -noout &&
+kubectl create secret tls ${CERT_NAME} --key ${KEY_FILE} --cert ${CERT_FILE} -n kube-example
 ```
 
 接下来，在你的Ingress资源中引用这个Secret：
