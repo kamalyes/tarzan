@@ -40,7 +40,7 @@ KUBE_SERVICE_SUBNET="10.96.0.0/12"
 FLANNEL_VERSION="0.24.0"
 CALICO_VERSION="3.26.1"
 DASHBOARD_VERSION="2.5.1"
-INGRESS_NGINX_VERSION="1.9.5"
+INGRESS_NGINX_VERSION="1.6.3"
 METRICS_VERSION="0.6.4"
 STATE_METRICS_STANDARD_VERSION="2.10.0"
 
@@ -87,7 +87,7 @@ function offline_install_template() {
 
 # 函数用于询问确认
 function prompt_for_confirmation() {
-    read -p "$which_prompt 请确认是否$install_prompt? [n/y]" __choice </dev/tty
+    read -p "$1 请确认是否$2? [n/y]" __choice </dev/tty
     case "$__choice" in
         y | Y)
             return 0

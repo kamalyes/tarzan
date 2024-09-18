@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: ${INGRESS_API_NAME}
-  namespace: ${NAMESPACE}
+  name: example-ingress
+  namespace: kube-example
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /$1
     nginx.ingress.kubernetes.io/proxy-body-size: "200m"
@@ -25,16 +25,16 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - ${INGRESS_API_HOST}
-    secretName: ${INGRESS_SECRET}
+    - example.com
+    secretName: example-tls-secret
   rules:
-  - host: ${INGRESS_API_HOST}
+  - host: example.com
     http:
       paths:
       - path: /(.*)
         pathType: ImplementationSpecific
         backend:
           service:
-            name: ${INGRESS_SVC_NAME}
+            name: nginx-svc
             port:
-              number: ${INGRESS_SVC_PORT}
+              number: 80
