@@ -76,7 +76,7 @@ EOF
   # 检查内核版本，决定是否添加 tcp_tw_recycle
   if [[ $(echo "$KERNEL_VERSION" | cut -d '.' -f 1) -ge 4 ]] && [[ $(echo "$KERNEL_VERSION" | cut -d '.' -f 2) -ge 12 ]]; then
     # 原因：linux>4.12内核版本不兼容
-    color_echo ${yellow} "检测到内核版本 $KERNEL_VERSION,跳过 tcp_tw_recycle 配置。"
+    color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION,跳过 tcp_tw_recycle 配置。"
   else
     if ! grep -q "net.ipv4.tcp_tw_recycle=0" "$KUBERNETES_CONFIG"; then
       echo "# 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通" >> "$KUBERNETES_CONFIG"
@@ -150,7 +150,7 @@ function update_ipvs_conf() {
   run_command "modprobe nf_conntrack"
   if [[ $MAJOR_VERSION -ge 4 ]] && [[ $MINOR_VERSION -ge 12 ]]; then
     # 原因：linux>4.12内核版本不兼容
-    color_echo ${yellow} "检测到内核版本 $KERNEL_VERSION, 跳过 modprobe nf_conntrack_ipv4 配置"
+    color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION, 跳过 modprobe nf_conntrack_ipv4 配置"
   else
     run_command "modprobe nf_conntrack_ipv4"
   fi
@@ -174,7 +174,7 @@ EOF
 
   if [[ $MAJOR_VERSION -ge 4 ]] && [[ $MINOR_VERSION -ge 12 ]]; then
     # 原因：linux>4.12内核版本不兼容
-    color_echo ${yellow} "检测到内核版本 $KERNEL_VERSION, 跳过 modprobe nf_conntrack_ipv4 配置"
+    color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION, 跳过 modprobe nf_conntrack_ipv4 配置"
   else
     echo "nf_conntrack_ipv4" >> "$KUBERNETES_MODULES_CONF"
   fi

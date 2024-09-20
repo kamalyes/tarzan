@@ -103,6 +103,8 @@ CONTAINERD_TIME_OUT="4h0m0s"
 KUBE_POD_SUBNET="172.22.0.0/16"
 KUBE_SERVICE_SUBNET="10.96.0.0/12"
 KUBE_TIME_ZONE="Asia/Shanghai"
+# 获取内网 IP 地址
+INTRANET_IP=$(hostname -I | awk '{print $1}')
 
 FLANNEL_VERSION="0.24.0"
 CALICO_VERSION="3.26.1"
@@ -124,7 +126,7 @@ MINOR_KERNEL_VERSION=$(echo "$KERNEL_VERSION" | cut -d '.' -f 2)
 
 # 处理下如果不是7的，直接复用7
 if [[ $CENTOS_VERSION -ne 7 ]]; then
-    color_echo ${red} "centos系统版本>7,centos_version=$CENTOS_VERSION, kernel_version=$KERNEL_VERSION, major_kernel_version=$MAJOR_KERNEL_VERSION, minor_kernel_version=$MINOR_KERNEL_VERSION, 降级使用7"
+    color_echo ${fuchsia} "centos系统版本>7,centos_version=$CENTOS_VERSION, kernel_version=$KERNEL_VERSION, major_kernel_version=$MAJOR_KERNEL_VERSION, minor_kernel_version=$MINOR_KERNEL_VERSION, 降级使用7"
     CENTOS_VERSION=7
 fi
 
