@@ -167,18 +167,20 @@ function online_download_dependency() {
     3f5ba2b53701ac9102ea7c7ab2ca6616a8cd5966591a77577585fde1c434ef74-cri-tools-1.26.0-0.$ARCHITECTURE.rpm
 
   # 下载 docker 包
-  download_packages docker "$RPM_DOCKER_URL" \
-      docker-ce-24.0.7-1.el7.$ARCHITECTURE.rpm \
-      docker-ce-cli-24.0.7-1.el7.$ARCHITECTURE.rpm \
-      docker-ce-rootless-extras-24.0.7-1.el7.$ARCHITECTURE.rpm \
-      docker-compose-plugin-2.21.0-1.el7.$ARCHITECTURE.rpm
+  if [[ $IS_MASTER == 1 ]]; then
+    download_packages docker "$RPM_DOCKER_URL" \
+        docker-ce-24.0.7-1.el7.$ARCHITECTURE.rpm \
+        docker-ce-cli-24.0.7-1.el7.$ARCHITECTURE.rpm \
+        docker-ce-rootless-extras-24.0.7-1.el7.$ARCHITECTURE.rpm \
+        docker-compose-plugin-2.21.0-1.el7.$ARCHITECTURE.rpm
 
-  # 下载 docker-before 包
-  download_packages docker-before "$RPM_BASE_URL" \
-      device-mapper-persistent-data-0.8.5-3.el7.$ARCHITECTURE.rpm \
-      lvm2-2.02.187-6.el7.$ARCHITECTURE.rpm \
-      yum-utils-1.1.31-54.el7_8.noarch.rpm
-
+    # 下载 docker-before 包
+    download_packages docker-before "$RPM_BASE_URL" \
+        device-mapper-persistent-data-0.8.5-3.el7.$ARCHITECTURE.rpm \
+        lvm2-2.02.187-6.el7.$ARCHITECTURE.rpm \
+        yum-utils-1.1.31-54.el7_8.noarch.rpm
+  fi
+  
   # 下载 docker-compose包
   # download_packages docker-compose "$GITHUB_CONTAINERNETWORKING_URL" \
   #     /v2.23.2/docker-compose-linux-x86_64
