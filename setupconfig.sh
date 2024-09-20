@@ -74,7 +74,7 @@ EOF
   fi
 
   # 检查内核版本，决定是否添加 tcp_tw_recycle
-  if [[ $(echo "$KERNEL_VERSION" | cut -d '.' -f 1) -ge 4 ]] && [[ $(echo "$KERNEL_VERSION" | cut -d '.' -f 2) -ge 12 ]]; then
+  if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
     # 原因：linux>4.12内核版本不兼容
     color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION,跳过 tcp_tw_recycle 配置。"
   else
@@ -148,11 +148,15 @@ function update_ipvs_conf() {
   run_command "modprobe ip_vs_wrr"
   run_command "modprobe ip_vs_sh"
   run_command "modprobe nf_conntrack"
-  if [[ $MAJOR_VERSION -ge 4 ]] && [[ $MINOR_VERSION -ge 12 ]]; then
-    # 原因：linux>4.12内核版本不兼容
-    color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION, 跳过 modprobe nf_conntrack_ipv4 配置"
+  # 根据内核版本判断是否加载 nf_conntrack_ipv4
+  if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
+      # 仅在内核版本 <= 4.12 时加载模块
+      color_echo ${fuchsia} "配置 nf_conntrack_ipv4  br_netfilter "
+      echo "modprobe -- nf_conntrack_ipv4" >> $IPVS_MODULES_CONF
+      echo "modprobe -- br_netfilter" >> $IPVS_MODULES_CONF
   else
-    run_command "modprobe nf_conntrack_ipv4"
+      # 原因：linux > 4.12内核版本不兼容
+      color_echo ${fuchsia} "跳过 modprobe nf_conntrack_ipv4 和 br_netfilter 配置"
   fi
   run_command "modprobe br_netfilter"
   run_command "modprobe overlay"
@@ -172,11 +176,12 @@ br_netfilter
 overlay
 EOF
 
-  if [[ $MAJOR_VERSION -ge 4 ]] && [[ $MINOR_VERSION -ge 12 ]]; then
-    # 原因：linux>4.12内核版本不兼容
-    color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION, 跳过 modprobe nf_conntrack_ipv4 配置"
-  else
+  if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
+    color_echo ${fuchsia} "配置 nf_conntrack_ipv4 "
     echo "nf_conntrack_ipv4" >> "$KUBERNETES_MODULES_CONF"
+  else
+    # 原因：linux>4.12内核版本不兼容
+    color_echo ${fuchsia} "跳过 modprobe nf_conntrack_ipv4 配置"
   fi
 
   run_command "systemctl enable systemd-modules-load"

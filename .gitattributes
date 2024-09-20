@@ -25,4 +25,4 @@ offline/k8s/1.28.2/b12353b679d428c5f36937a7071a68eb82a0abadd6ab03a2a3435e73b05ac
 offline/containerd/containerd.io-1.6.26-3.1.el7.x86_64.rpm filter=lfs diff=lfs merge=lfs -text
 offline/containerd/3f5ba2b53701ac9102ea7c7ab2ca6616a8cd5966591a77577585fde1c434ef74-cri-tools-1.26.0-0.x86_64.rpm filter=lfs diff=lfs merge=lfs -text
 offline/docker-before/lvm2-2.02.187-6.el7_9.5.x86_64.rpm filter=lfs diff=lfs merge=lfs -text
-offline/base-dependence/vim-enhanced-7.4.629-8.el7_9.x86_64.rpm filter=lfs diff=lfs merge=lfs -text
+offline/base-dependence/vim-enhanced-7.4.629-7.el7.x86_64.rpm filter=lfs diff=lfs merge=lfs -text
