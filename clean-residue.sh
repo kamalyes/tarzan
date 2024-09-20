@@ -11,7 +11,7 @@ function del_kube_node() {
             log "检查kubelet服务是否正常运行"
             kubelet --version 1>/dev/null 2>/dev/null
             if [ $? != 0 ]; then
-                log "kubelet 未正常安装, 跳过${del_kube_node_prompt}"
+                color_echo ${yellow} "kubelet 未正常安装, 跳过${del_kube_node_prompt}"
             else
                 kubectl delete node --all
             fi
@@ -26,7 +26,7 @@ function reset_kube() {
         kubeadm --version 1>/dev/null 2>/dev/null
         if [ $? != 0 ]; then
             systemctl status kubeadm
-            log "kubeadm 未正常安装, 跳过${reset_kube_prompt}"
+            color_echo ${yellow} "kubeadm 未正常安装, 跳过${reset_kube_prompt}"
         else
             kubeadm reset -f
         fi
@@ -55,12 +55,12 @@ function delete_dkube() {
         yum -y remove kube*
         yum -y remove docker*
         yum -y install lsof
-        lsof -i :6443 | grep -v "PID" | awk '{print "kill -9",\$2}' | sh
-        lsof -i :10251 | grep -v "PID" | awk '{print "kill -9",\$2}' | sh
-        lsof -i :10252 | grep -v "PID" | awk '{print "kill -9",\$2}' | sh
-        lsof -i :10250 | grep -v "PID" | awk '{print "kill -9",\$2}' | sh
-        lsof -i :2379 | grep -v "PID" | awk '{print "kill -9",\$2}' | sh
-        lsof -i :2380 | grep -v "PID" | awk '{print "kill -9",\$2}' | sh
+        lsof -i :6443 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
+        lsof -i :10251 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
+        lsof -i :10252 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
+        lsof -i :10250 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
+        lsof -i :2379 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
+        lsof -i :2380 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         yum clean all && yum makecache
         log "${delete_dkube_prompt} OK"
     fi

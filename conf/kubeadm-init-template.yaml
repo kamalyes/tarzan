@@ -12,21 +12,21 @@ localAPIEndpoint:
   advertiseAddress: {{KUBE_ADVERTISE_ADDRESS}}
   bindPort: {{KUBE_BIND_PORT}}
 nodeRegistration:
-  criSocket: unix:///run/containerd/containerd.sock
-  imagePullPolicy: IfNotPresent
+  criSocket: {{CRI_SOCKET_SOCK_FILE}}
+  imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
   name: {{KUBE_NODE_NAME}}
   taints: null
 
 ---
 apiVersion: kubeadm.k8s.io/v1beta3
-certificatesDir: /etc/kubernetes/pki
+certificatesDir: {{KUBERNETES_PKI_PATH}}
 clusterName: kubernetes
 controlPlaneEndpoint: {{KUBE_ADVERTISE_ADDRESS}}:{{KUBE_BIND_PORT}}
 controllerManager: {}
 dns: {}
 etcd:
   local:
-    dataDir: /var/lib/etcd
+    dataDir: {{KUBERNETES_ETCD}}
 imageRepository: {{GLOBAL_IMAGE_REPOSITORY}}
 kind: ClusterConfiguration
 kubernetesVersion: {{KUBE_VERSION}}

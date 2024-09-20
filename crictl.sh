@@ -3,146 +3,89 @@ source ./common.sh
 
 action=$1
 
-function online_pull_images() {
-  # 列出所有需要下载的镜像
-  kubeadm config images list --image-repository $GLOBAL_IMAGE_REPOSITORY
-  
-  # 根据K8s版本，下载相应的镜像
-  case $KUBE_VERSION in
-    "1.23.3")
-      # 下载v1.23.3版本的镜像
-      images=(
-        kube-apiserver:v1.23.3
-        kube-controller-manager:v1.23.3
-        kube-scheduler:v1.23.3
-        kube-proxy:v1.23.3
-        pause:3.6
-        etcd:3.5.1-0
-        coredns:v1.8.6
-      )
-      ;;
-    "1.28.2")
-      # 下载v1.28.2版本的镜像
-      images=(
-        kube-apiserver:v1.28.2
-        kube-controller-manager:v1.28.2
-        kube-scheduler:v1.28.2
-        kube-proxy:v1.28.2
-        pause:3.9
-        etcd:3.5.9-0
-        coredns:v1.10.1
-      )
-      ;;
-  esac
-  
-  # 遍历并下载每个镜像
-  for image in "${images[@]}"; do
-    crictl pull $GLOBAL_IMAGE_REPOSITORY/$image
-  done
-  
-  # 根据选择的网络插件类型，下载相应的网络插件镜像
-  case $KUBE_NETWORK in
-    "flannel")
-      # 下载Flannel网络插件的镜像
-      crictl pull $GLOBAL_IMAGE_REPOSITORY/kube-flannel:v0.24.0
-      crictl pull $GLOBAL_IMAGE_REPOSITORY/kube-flannel-cni-plugin:v1.2.0
-      ;;
-    "calico")
-      # 下载Calico网络插件的镜像
-      crictl pull $GLOBAL_IMAGE_REPOSITORY/kube-calico-controllers:v3.26.1
-      crictl pull $GLOBAL_IMAGE_REPOSITORY/kube-calico-cni:v3.26.1
-      crictl pull $GLOBAL_IMAGE_REPOSITORY/kube-calico-node:v3.26.1
-      ;;
-  esac
-  
-  # 下载其他常用的K8s相关插件镜像
-  other_images=(
-    kube-nginx-ingress-controller:v1.9.5
-    kube-state-metrics:2.10.0
-    kube-webhook-certgen:v20231011-8b53cabe0
-    kube-metrics-server:v0.6.4
-    kube-metrics-scraper:v1.0.7
-    kube-dashboard:v2.7.0
-  )
-  
-  for other_image in "${other_images[@]}"; do
-    crictl pull $GLOBAL_IMAGE_REPOSITORY/$other_image
+function pull_images() {
+  for image in "$@"; do
+    log "Pulling image: $GLOBAL_IMAGE_REPOSITORY/$image"
+    if ! run_command "crictl pull '$GLOBAL_IMAGE_REPOSITORY/$image'"; then
+      log "Failed to pull image: $GLOBAL_IMAGE_REPOSITORY/$image"
+    fi
   done
 }
 
-function offline_load_images() {
-  # 使用 find 命令获取目录中所有 .tar 文件
-  CRICTL_IMAGE_TAR_PATH="offline/crictl-images"
+function online_pull_kube_base_images() {
+  # 根据K8s版本，定义特定镜像
+  declare -A images_map
+  images_map["$KUBE_VERSION"]="kube-apiserver:v$KUBE_VERSION kube-controller-manager:v$KUBE_VERSION kube-scheduler:v$KUBE_VERSION kube-proxy:v$KUBE_VERSION"
+
+  # 定义公共镜像
+  declare -A common_images_map
+  common_images_map["1.23.3"]="pause:3.6 etcd:3.5.1-0 coredns:v1.8.6"
+  common_images_map["1.28.2"]="pause:3.9 etcd:3.5.9-0 coredns:v1.10.1"
+
+  # 获取对应版本的镜像
+  local images=(${images_map[$KUBE_VERSION]})
+
+  # 根据K8s版本合并公共镜像
+  if [[ -n "${common_images_map[$KUBE_VERSION]}" ]]; then
+    # 将字符串转换为数组
+    local common_images=(${common_images_map[$KUBE_VERSION]})
+    images+=("${common_images[@]}")
+  else
+    color_echo ${red} "No common images defined for Kubernetes version $KUBE_VERSION."
+    return 0 # 先返回OK、不做下面操作
+  fi
+
+  # 下载所有镜像
+  pull_images "${images[@]}"
+}
+
+function offline_load_kube_base_images() {
+  # 检查目录是否存在
+  if [ ! -d "$CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION" ]; then
+    color_echo ${fuchsia} "Directory $CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION does not exist, SKipling Importing"
+    return 0  # 目录不存在，跳过导入返回 OK
+  fi
+
+  # 使用 find 命令获取目录中所有 .tar.gz 文件  
   files=($(find "$CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION" -type f -name "*.tar.gz"))
 
-  # 遍历数组中的每个文件，并导入到K8s中
+  # 检查是否找到了任何 .tar.gz 文件
+  if [ ${#files[@]} -eq 0 ]; then
+    color_echo ${fuchsia} "No .tar.gz files found in $CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION"
+    return 0  # 返回 OK，表示没有错误
+  fi
+
+  # 遍历数组中的每个文件，并导入到 K8s 中
   for file in "${files[@]}"; do
-      log "Importing $file..."
-      ctr -n=k8s.io image import "$file"
+    log "Importing $file..."
+    if ! run_command "ctr -n=k8s.io image import '$file'"; then
+      color_echo ${red} "Failed to import image from $file"
+      return 1  # 导入失败，返回错误
+    fi
   done
 
-  # # 根据选择的网络插件类型，导入相应的网络插件镜像
-  # case $KUBE_NETWORK in
-  #   "flannel")
-  #     # Flannel网络插件的镜像文件
-  #     network_files=(kube-flannel-cni-plugin_v1.2.0.tar.gz kube-flannel-v0.24.0.tar.gz)
-  #     ;;
-  #   "calico")
-  #     # Calico网络插件的镜像文件
-  #     network_files=(kube-calico-controllers_v3.26.1.tar.gz kube-calico-cni_v3.26.1.tar.gz kube-calico-node_v3.26.1.tar.gz)
-  #     ;;
-  # esac
-
-  # # 如果定义了网络插件镜像文件，则导入它们
-  # for network_file in "${network_files[@]}"; do
-  #   # 拼接完整路径
-  #   full_path="$CRICTL_IMAGE_TAR_PATH/$network_file"
-  #   # 检查文件是否存在
-  #   if [ -f "$full_path" ]; then
-  #     log "Importing network file $network_file..."
-  #     ctr -n=k8s.io image import "$full_path"
-  #   else
-  #     echo "File $network_file not found."
-  #   fi
-  # done
-
-  # # 其他常用的K8s相关镜像文件
-  # other_files=(kube-dashboard_v2.5.1.tar.gz kube-metrics-scraper_v1.0.7 kube-metrics-server_v0.6.4.tar.gz kube-nginx-ingress-controller_v1.9.5.tar.gz kube-state-metrics_2.10.0.tar.gz kube-webhook-certgen_v20231011-8b53cabe0.tar.gz)
-  
-  # # 导入其他镜像文件
-  # for other_file in "${other_files[@]}"; do
-  #     full_path="$CRICTL_IMAGE_TAR_PATH/$other_file"
-  #     # 检查文件是否存在
-  #     if [ -f "$full_path" ]; then
-  #       log "Importing other file $other_file..."
-  #       ctr -n=k8s.io image import "$full_path"
-  #     else
-  #       echo "File $other_file not found."
-  #     fi
-  # done
+  return 0  # 如果所有操作成功，返回 OK
 }
 
 function main_entrance() {
   case "${action}" in
-  online_pull_images)
+  online_pull_kube_base_images)
     KUBE_VERSION=$2
     GLOBAL_IMAGE_REPOSITORY=$3
     log "Online Downloading images required 
         K8s Version $KUBE_VERSION
         Image Repository $GLOBAL_IMAGE_REPOSITORY
         "
-    online_pull_images
+    online_pull_kube_base_images
     ;;
-  offline_load_images)
+  offline_load_kube_base_images)
     KUBE_VERSION=$2
-    KUBE_NETWORK=$3
-    GLOBAL_IMAGE_REPOSITORY=$4
+    GLOBAL_IMAGE_REPOSITORY=$3
     log "Offline Load images required 
         K8s Version $KUBE_VERSION
-        Network Type $KUBE_NETWORK
         Image Repository $GLOBAL_IMAGE_REPOSITORY
         "
-    offline_load_images
+    offline_load_kube_base_images
     ;;
   esac
 }
