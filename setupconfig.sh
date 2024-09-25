@@ -42,49 +42,50 @@ EOF
   run_command "mkdir -p $SYSCTLD_PATH"
   run_command "chmod 751 -R $SYSCTLD_PATH"
 
-  # 创建Kubernetes系统配置
-  if ! grep -q "net.ipv4.ip_forward=1" "$KUBERNETES_CONFIG"; then
-    cat <<EOF > $KUBERNETES_CONFIG
-# 开启数据包转发功能（实现vxlan）
+  # 添加Kubernetes系统配置
+cat <<EOF > $KUBERNETES_CONFIG
+# 开启数据包转发功能(实现vxlan)
 net.ipv4.ip_forward=1
+
 # iptables对bridge的数据进行处理
 net.bridge.bridge-nf-call-iptables=1
 net.bridge.bridge-nf-call-ip6tables=1
 net.bridge.bridge-nf-call-arptables=1
+
 # 不允许将TIME-WAIT sockets重新用于新的TCP连接
 net.ipv4.tcp_tw_reuse=0
+
 # socket监听(listen)的backlog上限
 net.core.somaxconn=32768
-# 最大跟踪连接数,默认 nf_conntrack_buckets * 4
+
+# 最大跟踪连接数, 默认 nf_conntrack_buckets * 4
 net.netfilter.nf_conntrack_max=1000000
-# 禁止使用 swap 空间,只有当系统 OOM 时才允许使用它
+
+# 禁止使用 swap 空间, 只有当系统 OOM 时才允许使用它
 vm.swappiness=0
-# 计算当前的内存映射文件数。
+
+# 计算当前的内存映射文件数
 vm.max_map_count=655360
+
 # 内核可分配的最大文件数
 fs.file-max=6553600
+
 # 持久连接
 net.ipv4.tcp_keepalive_time=600
 net.ipv4.tcp_keepalive_intvl=30
 net.ipv4.tcp_keepalive_probes=10
 EOF
-    log "Kubernetes系统配置写入成功"
-  else
-    log "Kubernetes系统配置已存在，跳过写入"
-  fi
+
+log "Kubernetes系统配置写入成功"
 
   # 检查内核版本，决定是否添加 tcp_tw_recycle
   if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
     # 原因：linux>4.12内核版本不兼容
     color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION,跳过 tcp_tw_recycle 配置。"
   else
-    if ! grep -q "net.ipv4.tcp_tw_recycle=0" "$KUBERNETES_CONFIG"; then
-      echo "# 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通" >> "$KUBERNETES_CONFIG"
-      echo "net.ipv4.tcp_tw_recycle=0" >> "$KUBERNETES_CONFIG"
-      log "tcp_tw_recycle配置添加成功"
-    else
-      log "tcp_tw_recycle配置已存在,跳过写入"
-    fi
+    echo "# 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通" >> "$KUBERNETES_CONFIG"
+    echo "net.ipv4.tcp_tw_recycle=0" >> "$KUBERNETES_CONFIG"
+    log "tcp_tw_recycle配置添加成功"
   fi
 
   log "创建kube所需文件夹、重新加载配置"
@@ -140,6 +141,9 @@ function disabled_selinux() {
 }
 
 function update_ipvs_conf() {
+  log "开启ipv4转发"
+	echo "1" >> /proc/sys/net/ipv4/ip_forward
+
   log "配置ipvs功能"
   
   # 加载所需的内核模块

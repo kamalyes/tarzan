@@ -244,7 +244,9 @@ function main_entrance() {
     ;;
   online_download_dependency)
     KUBE_VERSION=$2
+    IS_MASTER=$3
     log "Online download rpm depend packages k8s version $KUBE_VERSION"
+    log "Online download rpm depend packages is k8s master $IS_MASTER"
     online_download_dependency
     ;;
   offline_install_cni_plugins)

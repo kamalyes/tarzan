@@ -32,8 +32,7 @@ function color_echo() {
 function run_command() {
     local command="$1"
     
-    # 使用 color_echo 输出命令
-    color_echo ${green} "Executing: $command"  # 使用绿色输出命令
+    color_echo ${green} "Executing command: $command"  # 使用绿色输出命令
     
     # 执行命令并捕获输出和错误
     { 

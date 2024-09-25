@@ -14,8 +14,38 @@ function set_hostname(){
     run_command "hostnamectl set-hostname $hostname"
 }
 
+function add_virtual_ip() {
+    local public_ip=$1
+    local interface=$2
+    # 检查公网 IP 是否存在
+    echo "add_virtual_ip public_ip: $public_ip interface: $interface"
+    if ip a | grep -q "$public_ip"; then
+        color_echo ${fuchsia} "IP $public_ip already exists."
+    else
+        log "IP $public_ip does not exist. Adding virtual IP..."
+        # 创建虚拟网卡配置
+        cat > /etc/sysconfig/network-scripts/ifcfg-${interface}:1 <<EOF
+BOOTPROTO=static
+DEVICE=${interface}:1
+IPADDR=$public_ip
+PREFIX=32
+TYPE=Ethernet
+USERCTL=no
+ONBOOT=yes
+EOF
+        # 启用新的虚拟网卡
+        if ifup ${interface}:1; then
+            log "Successfully added virtual IP $public_ip."
+            # 重启网络
+	        run_command "systemctl restart network"
+        else
+            color_echo ${red} "Failed to add virtual IP $public_ip."
+        fi
+    fi
+}
+
 function install_depend(){
-    run_command "/bin/bash yum-packages.sh online_download_dependency $KUBE_VERSION"
+    run_command "/bin/bash yum-packages.sh online_download_dependency $KUBE_VERSION $IS_MASTER"
     log "安装所需依赖"
     run_command "/bin/bash yum-packages.sh offline_install_public_dependency"
     if [[ $IS_MASTER == 1 ]]; then
@@ -31,8 +61,6 @@ function prepare_work() {
     if [[ $KUBE_VERSION == "1.28.2" ]]; then
         KUBE_PAUSE_VERSION=3.9
     fi
-    # 设置hostname
-    set_hostname $KUBE_NODE_NAME
     # 安装依赖
 	run_command "/bin/bash setupconfig.sh source_chrony"
     run_command "/bin/bash setupconfig.sh update_kubernetes_conf"
@@ -48,7 +76,7 @@ function prepare_work() {
 
 function upload_hosts {
     local update_host_prompt="Updating hosts file"
-    echo "$KUBE_ADVERTISE_ADDRESS k8s-master" >>/etc/hosts
+    # echo "$KUBE_ADVERTISE_ADDRESS k8s-master" >>/etc/hosts
 
     # 检查 conf/hosts 文件是否存在
     if [ -f "conf/hosts" ]; then
@@ -62,7 +90,8 @@ function upload_hosts {
                 echo "$line" >> /etc/hosts
             fi
         done < "conf/hosts"
-        service network restart
+        # 重启网络
+        run_command "systemctl restart network"
         log "${update_host_prompt} OK"
     else
         color_echo ${fuchsia} "conf/hosts file not found. Skipping."
@@ -272,6 +301,7 @@ while [[ $# -gt 0 ]]; do
         ;;
         -hname | --hostname)
         KUBE_NODE_NAME=$2
+        set_hostname $KUBE_NODE_NAME
         shift
         ;;
         --flannel)
@@ -334,6 +364,9 @@ while [[ $# -gt 0 ]]; do
         echo "Discovery token CA cert hash set to: $(color_echo $green $DISCOVERY_TOKEN_CA_CERT_HASH)"
         shift
         ;;
+        -vrip|--virtualip)
+        add_virtual_ip "$KUBE_ADVERTISE_ADDRESS" "eth0"
+        ;;
         -h|--help)
         echo "Usage: $0 [options]"
         echo "Options:"
@@ -354,6 +387,7 @@ while [[ $# -gt 0 ]]; do
         echo "   --join                                      join the Kubernetes cluster"
         echo "   --masterip                                  master node IP address"
         echo "   --discovery-token-ca-cert-hash              discovery token CA cert hash"
+        echo "   -vrip|--virtualip                           default=false"
         echo "   -h, --help                                  find help"
         echo "   Master: sh install-kube.sh -v v1.23.3 -addr $INTRANET_IP --flannel"
         echo "   Slave:  sh install-kube.sh "
