@@ -52,9 +52,12 @@ kind: Secret
 metadata:
   labels:
     k8s-app: kube-dashboard
-  name: kube-dashboard-certs
+  name: kubernetes-dashboard-certs
   namespace: kube-dashboard
 type: Opaque
+data:
+  tls.crt: {{KUBE_DASHBOARD_BASE64_ENCODED_CERT}}
+  tls.key: {{KUBE_DASHBOARD_BASE64_ENCODED_KEY}}
 
 ---
 
@@ -63,7 +66,7 @@ kind: Secret
 metadata:
   labels:
     k8s-app: kube-dashboard
-  name: kube-dashboard-csrf
+  name: kubernetes-dashboard-csrf
   namespace: kube-dashboard
 type: Opaque
 data:
@@ -76,7 +79,7 @@ kind: Secret
 metadata:
   labels:
     k8s-app: kube-dashboard
-  name: kube-dashboard-key-holder
+  name: kubernetes-dashboard-key-holder
   namespace: kube-dashboard
 type: Opaque
 
@@ -87,7 +90,7 @@ apiVersion: v1
 metadata:
   labels:
     k8s-app: kube-dashboard
-  name: kube-dashboard-settings
+  name: kubernetes-dashboard-settings
   namespace: kube-dashboard
 
 ---
@@ -103,12 +106,12 @@ rules:
   # Allow Dashboard to get, update and delete Dashboard exclusive secrets.
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["kube-dashboard-key-holder", "kube-dashboard-certs", "kube-dashboard-csrf"]
+    resourceNames: ["kubernetes-dashboard-key-holder", "kubernetes-dashboard-certs", "kubernetes-dashboard-csrf"]
     verbs: ["get", "update", "delete"]
-    # Allow Dashboard to get and update 'kube-dashboard-settings' config map.
+    # Allow Dashboard to get and update 'kubernetes-dashboard-settings' config map.
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["kube-dashboard-settings"]
+    resourceNames: ["kubernetes-dashboard-settings"]
     verbs: ["get", "update"]
     # Allow Dashboard to get metrics.
   - apiGroups: [""]
@@ -202,7 +205,7 @@ spec:
             # to it. Uncomment only if the default does not work.
             # - --apiserver-host=http://my-address:port
           volumeMounts:
-            - name: kube-dashboard-certs
+            - name: kubernetes-dashboard-certs
               mountPath: /certs
               # Create on-disk volume to store exec logs
             - mountPath: /tmp
@@ -220,9 +223,9 @@ spec:
             runAsUser: 1001
             runAsGroup: 2001
       volumes:
-        - name: kube-dashboard-certs
+        - name: kubernetes-dashboard-certs
           secret:
-            secretName: kube-dashboard-certs
+            secretName: kubernetes-dashboard-certs
         - name: tmp-volume
           emptyDir: {}
       serviceAccountName: kube-dashboard

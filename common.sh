@@ -1,32 +1,26 @@
 #!/usr/bin/env bash
+source ./variables.sh
+
+# cancel centos alias
+[[ -f /etc/redhat-release ]] && unalias -a
+
 action=$1
 set -e  # 如果任何命令失败，退出脚本
 trap 'echo "An error occurred. Exiting."; exit 1;' ERR
 
-__CURRENT_DIR=$(
-  cd "$(dirname "$0")"
-  pwd
-)
-
-TZ_BASE=${TZ_BASE:-/opt/tarzan}
-
-#######color code########
-red="31m"  
-green="32m"
-yellow="33m" 
-blue="36m"
-fuchsia="35m"
-message_title="[Tarzan Log]: $(date +'%Y-%m-%d %H:%M:%S') -"
-
 function log() {
     message="$message_title $1 "
-    echo -e "\033[32m## ${message} \033[0m\n" 2>&1 | tee -a ${__CURRENT_DIR}/install.log
+    echo -e "\033[32m## ${message} \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
+}
+
+function color_title() {
+  echo -e "\033[$1$2 \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
 }
 
 function color_echo() {
   # 输出带颜色的文本，并同时记录到日志文件
   message="$message_title $2 "
-  echo -e "\033[$1## ${message} \033[0m\n" 2>&1 | tee -a ${__CURRENT_DIR}/install.log
+  echo -e "\033[$1## ${message} \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
 }
 
 function run_command() {
@@ -36,104 +30,19 @@ function run_command() {
     
     # 执行命令并捕获输出和错误
     { 
-      eval "$command" 2>&1 | tee -a "${__CURRENT_DIR}/install.log"
+      eval "$command" 2>&1 | tee -a "${TARZAN_INSTALL_LOG}"
     } || {
       color_echo ${red} "Error executing: $command"  # 使用红色输出错误
       return 1  # 返回错误代码
     }
 }
 
-# 安装路径
-SYSCTLD_PATH="/etc/sysctl.d"
-KUBERNETES_CONFIG="$SYSCTLD_PATH/kubernetes.conf"
-VAR_PATH="/var/lib"
-KUBELET_IJOIN_PATH="$VAR_PATH/kubelet"
-KUBERNETES_PATH="/etc/kubernetes"
-KUBERNETES_PKI_PATH="$KUBERNETES_PATH/pki"
-KUBERNETES_ETCD="$VAR_PATH/etcd"
-SELINUX_CONF_PATH="/etc/selinux/config"
-KUBERNETES_MODULES_CONF="/etc/modules-load.d/k8s-modules.conf"
-SYSTEM_CONFIG_PATH="/etc/systemd/system.conf.d"
-KUBERNETES_ACCOUNTING_CONF=$SYSTEM_CONFIG_PATH/kubernetes-accounting
-SECURITY_LIMITS_CONF="/etc/security/limits.conf"
-CONTAINERD_ETC_PATH="/etc/containerd"
-CONTAINERD_CONF="$CONTAINERD_ETC_PATH/config.toml"
-CONTAINERD_OCICRYPT_KEYS_CONF="$CONTAINERD_ETC_PATH/ocicrypt/keys"
-CONTAINERD_OCICRYPT_KEYPROVIDER_CONF="$CONTAINERD_ETC_PATH/ocicrypt/ocicrypt_keyprovider.conf"
-CHRONY_CONF="/etc/chrony.conf"
-KUBERNETES_YUM_REPO_CONF="/etc/yum.repos.d/kubernetes.repo"
-CRICTL_CONF="/etc/crictl.yaml"
-CNI_INSTALL_PATH="/opt/cni/bin"
-CNI_NET_PATH="/etc/cni/net.d"
-KUBE_FLANNEL_CFG_MOUNTPATH="/etc/kube-flannel"
-KUBE_FLANNEL_RUN_MOUNTPATH="/run/flannel"
-CONTAINERD_OPT_PATH="/opt/containerd"
-CONTAINERD_RUN_PATH="/run/containerd"
-CONTAINERD_DATA_PATH="/data/containerd"
-CONTAINERD_MAX_RECV_MESSAGE_SIZE=16777216
-CONTAINERD_MAX_SEND_MESSAGE_SIZE=16777216
-CRI_SOCKET_SOCK_FILE="$CONTAINERD_RUN_PATH/containerd.sock"
-CRI_RUNTIME_ENDPOINT="unix://$CONTAINERD_RUN_PATH/containerd.sock"
-TARZAN_OFFLINE_PATH="offline"
-CRICTL_IMAGE_TAR_PATH="$TARZAN_OFFLINE_PATH/crictl-images"
-
-# 初始化系统  必须使用root或者具备sudo权限帐号运行
-
-PERMISSION=755
-IS_MASTER=0
-KUBE_VERSION="1.23.3"
-ONLY_INSTALL_DEPEND="false"
-KUBE_ADVERTISE_ADDRESS=$(cat /etc/hosts | grep localhost | awk '{print $1}' | awk 'NR==1{print}')
-KUBE_BIND_PORT="6443"
-KUBE_TOKEN="tarzan.e6fa0b76a6898af7"
-NODE_PACKAGE_PATH="kube_slave"
-ADDONS_IMAGE_REPOSITORY="registry.cn-shenzhen.aliyuncs.com/isimetra"
-GLOBAL_IMAGE_REPOSITORY="registry.cn-hangzhou.aliyuncs.com/google_containers"
-# imagePullPolicy: IfNotPresent 是 Kubernetes 中 Pod 配置的一部分，指定了在创建 Pod 时如何拉取容器镜像。以下是 imagePullPolicy 的三种主要策略的简要说明：
-# Always: 每次启动 Pod 时都会尝试拉取最新的镜像。适用于开发环境或需要确保使用最新镜像的场景。
-# IfNotPresent: 只有在本地不存在指定的镜像时，才会从镜像仓库拉取。适用于大多数生产环境，因为它可以减少不必要的网络流量和拉取时间。
-# Never: 不会尝试拉取镜像，只会使用本地已有的镜像。如果本地没有指定的镜像，Pod 将无法启动。适用于在本地开发或测试时。
-KUBE_IMAGE_PULL_POLICY="IfNotPresent"
-KUBE_ADMIN_CONFIG_FILE="$KUBERNETES_PATH/admin.conf"
-KUBE_NODE_NAME="k8s-master"
-KUBE_NETWORK="flannel"
-KUBE_PAUSE_VERSION="3.6"
-CONTAINERD_TIME_OUT="4h0m0s"
-KUBE_POD_SUBNET="172.22.0.0/16"
-KUBE_SERVICE_SUBNET="10.96.0.0/12"
-KUBE_TIME_ZONE="Asia/Shanghai"
-# 获取内网 IP 地址
-INTRANET_IP=$(hostname -I | awk '{print $1}')
-
-FLANNEL_VERSION="0.24.0"
-CALICO_VERSION="3.26.1"
-DASHBOARD_VERSION="2.5.1"
-INGRESS_NGINX_VERSION="1.6.3"
-METRICS_VERSION="0.6.4"
-STATE_METRICS_STANDARD_VERSION="2.10.0"
-CNI_PLUGINS_VERSION="v1.5.1"
-
-IMAGE_FILE_PATH="$TARZAN_OFFLINE_PATH/images/images.lock"
-
-# 获取系统版本和架构
-CENTOS_VERSION=$(rpm -E '%{centos}')
-ARCHITECTURE=$(uname -m)
-KERNEL_VERSION=$(uname -r)
-# 提取主版本号和次版本号
-MAJOR_KERNEL_VERSION=$(echo "$KERNEL_VERSION" | cut -d '.' -f 1)
-MINOR_KERNEL_VERSION=$(echo "$KERNEL_VERSION" | cut -d '.' -f 2)
-
-# 处理下如果不是7的，直接复用7
-if [[ $CENTOS_VERSION -ne 7 ]]; then
-    color_echo ${fuchsia} "centos系统版本>7,centos_version=$CENTOS_VERSION, kernel_version=$KERNEL_VERSION, major_kernel_version=$MAJOR_KERNEL_VERSION, minor_kernel_version=$MINOR_KERNEL_VERSION, 降级使用7"
-    CENTOS_VERSION=7
-fi
-
-# 动态生成 RPM 基础 URL
-RPM_BASE_URL="http://mirrors.aliyun.com/centos/${CENTOS_VERSION}/os/${ARCHITECTURE}/Packages/"
-RPM_DOCKER_URL="https://mirrors.aliyun.com/docker-ce/linux/centos/${CENTOS_VERSION}/${ARCHITECTURE}/stable/Packages/"
-RPM_KUBERNETES_URL="https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-${ARCHITECTURE}/Packages/"
-GITHUB_CONTAINERNETWORKING_URL="https://github.com/containernetworking/plugins/releases/download"
+function restart_network(){
+    # 对于基于 Systemd 的系统
+    run_command "systemctl restart network"
+    # 对于某些特殊系统
+    run_command "service network restart"
+}
 
 # yum安装函数模板
 function yum_install_template() {
@@ -282,11 +191,96 @@ function download_packages() {
     done
 }
 
+function set_hostname(){
+    local hostname=$1
+    if [[ $hostname =~ '_' ]];then
+        color_echo $yellow "hostname can't contain '_' character, auto change to '-'.."
+        hostname=`echo $hostname|sed 's/_/-/g'`
+    fi
+    echo "set hostname: $(color_title $green $hostname)"
+    run_command "hostnamectl set-hostname $hostname"
+}
+
+function add_virtual_ip() {
+    local public_ip=$1
+    local interface=$2
+    # 检查公网 IP 是否存在
+    echo "add_virtual_ip public_ip: $public_ip interface: $interface"
+    if ip a | grep -q "$public_ip"; then
+        color_echo ${fuchsia} "IP $public_ip already exists."
+    else
+        log "IP $public_ip does not exist. Adding virtual IP..."
+        # 创建虚拟网卡配置
+        cat > /etc/sysconfig/network-scripts/ifcfg-${interface} <<EOF
+BOOTPROTO=static
+DEVICE=${interface}
+IPADDR=$public_ip
+PREFIX=32
+TYPE=Ethernet
+USERCTL=no
+ONBOOT=yes
+EOF
+        # 启用新的虚拟网卡
+        if ifup ${interface}; then
+            log "Successfully added virtual IP $public_ip."
+            # 重启网络
+            restart_network
+        else
+            color_echo ${red} "Failed to add virtual IP $public_ip."
+        fi
+    fi
+}
+
+# 函数：生成自签名证书和私钥，并返回 Base64 编码的证书和私钥
+generate_self_signed_cert() {
+    local key_file=$1
+    local csr_file=$2
+    local crt_file=$3
+    local common_name=$4
+    
+    # 生成私钥
+    openssl genrsa -out "$key_file" 2048
+    
+    # 生成证书签名请求 (CSR)
+    openssl req -new -out "$csr_file" -key "$key_file" -subj "/CN=$common_name"
+    
+    # 生成自签名证书
+    openssl x509 -req -days 3650 -in "$csr_file" -signkey "$key_file" -out "$crt_file"
+    
+    # 编码证书
+    local base64_encoded_cert=$(cat "$crt_file" | base64 | tr -d '\n')
+    
+    # 编码私钥
+    local base64_encoded_key=$(cat "$key_file" | base64 | tr -d '\n')
+    
+    # 返回结果
+    echo "$base64_encoded_cert" "$base64_encoded_key"
+}
+
 function main_entrance() {
   case "${action}" in
-  enable_service)
-    enable_service
-    ;;
+    enable_service)
+      enable_service "$2"  # 传递服务名称参数
+      ;;
+    yum_install)
+      yum_install_template "$2" "$3"  # 传递 RPM 路径和组件名称
+      ;;
+    check_components)
+      check_components "${@:2}"  # 传递组件列表
+      ;;
+    set_hostname)
+      set_hostname "$2"  # 传递主机名
+      ;;
+    add_virtual_ip)
+      add_virtual_ip "$2" "$3"  # 传递公网 IP 和接口
+      ;;
+    download_packages)
+      download_packages "$2" "$3" "${@:4}"  # 传递文件夹、基础 URL 和包列表
+      ;;
+    retry_command)
+      retry "$2" "$3" "$4"  # 传递命令、最大尝试次数和间隔
+      ;;
   esac
 }
+
 main_entrance $@

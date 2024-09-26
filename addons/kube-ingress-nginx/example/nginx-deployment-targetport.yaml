@@ -8,21 +8,21 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   namespace: kube-example  # 更新为 kube-example 命名空间
-  name: nginx
+  name: tgp-nginx
   labels:
-    app: nginx
+    app: tgp-nginx
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: nginx
+      app: tgp-nginx
   template:
     metadata:
       labels:
-        app: nginx
+        app: tgp-nginx
     spec:
       containers:
-      - name: nginx
+      - name: tgp-nginx
         image: {{ADDONS_IMAGE_REPOSITORY}}/nginx:1.25.2-alpine3.18-slim  # 使用 Nginx 镜像
         ports:
         - containerPort: 80  # Nginx 默认端口
@@ -50,10 +50,10 @@ apiVersion: v1
 kind: Service
 metadata:
   namespace: kube-example  # 更新为 kube-example 命名空间
-  name: nginx-svc
+  name: tgp-nginx-svc
 spec:
   selector:
-    app: nginx
+    app: tgp-nginx
   ports:
     - port: 80
       targetPort: 80
@@ -62,15 +62,15 @@ spec:
 apiVersion: autoscaling/v2beta1
 kind: HorizontalPodAutoscaler
 metadata:
-  name: nginx-hpa-c
+  name: tgp-nginx-hpa-c
   namespace: kube-example
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: nginx
-  minReplicas: 2
-  maxReplicas: 5
+    name: tgp-nginx
+  minReplicas: 1
+  maxReplicas: 2
   metrics:
   - type: Resource
     resource:
@@ -80,15 +80,15 @@ spec:
 apiVersion: autoscaling/v2beta1
 kind: HorizontalPodAutoscaler
 metadata:
-  name: nginx-hpa-m
+  name: tgp-nginx-hpa-m
   namespace: kube-example
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: nginx
-  minReplicas: 2
-  maxReplicas: 5
+    name: tgp-nginx
+  minReplicas: 1
+  maxReplicas: 2
   metrics:
   - type: Resource
     resource:

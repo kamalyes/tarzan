@@ -1,0 +1,107 @@
+name: 🚀 Release Packages 🎉
+
+on:
+  push:
+    tags:
+      - 'v*'  # 仅在推送以 v 开头的标签时触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 🤖 Checkout code
+      uses: actions/checkout@v2
+      with:
+        lfs: true  # 确保拉取 LFS 文件
+
+    - name: ⚙️ Set up variables
+      run: |
+        set -e  # 在出现错误时立即退出
+        COMMON_FILES="addons conf docs offline utils *.sh README.md"
+
+        get_included_dirs() {
+            local root_dir="$1"
+            shift
+            local exclude_dirs=("$@")
+            local included_dirs=()
+
+            for dir in "$root_dir"/*; do
+                if [[ -d "$dir" ]]; then
+                    local dir_name=$(basename "$dir")
+                    if [[ ! " ${exclude_dirs[*]} " =~ " ${dir_name} " ]]; then
+                        included_dirs+=("$dir")
+                    fi
+                fi
+            done
+            echo "${included_dirs[*]}"
+        }
+
+        INCLUDED_DIRS=("cni" "docker-compose")
+        # 获取排除的目录
+        EXCLUDE_ONLINE=$(get_included_dirs "offline" "${INCLUDED_DIRS[@]}")
+        EXCLUDE_1_23_3=("offline/k8s/1.28.2" "offline/crictl-images/1.28.2")
+        EXCLUDE_1_28_2=("offline/k8s/1.23.3" "offline/crictl-images/1.23.3")
+
+        release_body="Release ${GITHUB_REF} - New features and improvements."
+
+        # 将环境变量写入
+        echo "COMMON_FILES=${COMMON_FILES}" >> $GITHUB_ENV
+        echo "EXCLUDE_ONLINE=${EXCLUDE_ONLINE[*]}" >> $GITHUB_ENV
+        echo "EXCLUDE_1_23_3=${EXCLUDE_1_23_3[*]}" >> $GITHUB_ENV
+        echo "EXCLUDE_1_28_2=${EXCLUDE_1_28_2[*]}" >> $GITHUB_ENV
+        echo "release_body=${release_body}" >> $GITHUB_ENV
+
+    - name: 🔍 Get commit ID and tag name
+      id: get_info
+      run: |
+        echo "Fetching commit ID and tag name..."
+        commit_id=$(git rev-parse --short HEAD)
+        tag_name=$(git describe --tags --abbrev=0)
+        echo "commit_id=${commit_id}" >> $GITHUB_ENV
+        echo "tag_name=${tag_name}" >> $GITHUB_ENV  # 使用 git 命令获取当前标签名
+        echo "filename_prefix=tarzan-${tag_name}-${commit_id}" >> $GITHUB_ENV  # 创建文件名前缀
+        echo "Fetched commit ID: ${commit_id} and tag name: ${tag_name}"
+    - name: 📦 Create tar.gz archive
+      run: |
+        set -e
+        run_command() {
+          echo "Running command: $*"
+          "$@" 2>&1 | tee /tmp/command_output.log
+        }
+
+        create_tar() {
+          local output=$1
+          local transform_prefix=$2
+          shift 2
+          local exclude_args=()
+          for exclude in "$@"; do
+            exclude_args+=(--exclude="$exclude")
+          done
+          echo "Creating archive: ${output} with prefix: ${transform_prefix}"
+          run_command tar -czvf "${output}" --transform="s,^,${transform_prefix}/," "${exclude_args[@]}" $COMMON_FILES
+        }
+
+        # 使用 commit ID 和 tag 名称创建 tar.gz 文件
+
+        create_tar "${{ env.filename_prefix }}-online.tar.gz" "tarzan-online" ${{ env.EXCLUDE_ONLINE }}
+        create_tar "${{ env.filename_prefix }}-offline-1.23.3.tar.gz" "tarzan-offline-1.23.3" ${{ env.EXCLUDE_1_23_3 }}
+        create_tar "${{ env.filename_prefix }}-offline-1.28.2.tar.gz" "tarzan-offline-1.28.2" ${{ env.EXCLUDE_1_28_2 }}
+        create_tar "${{ env.filename_prefix }}-offline-multiple.tar.gz" "tarzan-offline-multiple"
+
+    - name: 📤 Upload Release Assets
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}  # 使用当前标签作为发布的标签
+        name: Release ${{ github.ref }}  # 发布名称
+        body: ${{ env.release_body }}  # 使用变量作为发布说明
+        draft: false  # 不创建草稿
+        prerelease: false  # 不标记为预发布
+        files: |
+          ${{ env.filename_prefix }}-online.tar.gz
+          ${{ env.filename_prefix }}-offline-1.23.3.tar.gz
+          ${{ env.filename_prefix }}-offline-1.28.2.tar.gz
+          ${{ env.filename_prefix }}-offline-multiple.tar.gz

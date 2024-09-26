@@ -1,49 +1,6 @@
 #!/usr/bin/env bash
 source ./common.sh
 
-# cancel centos alias
-[[ -f /etc/redhat-release ]] && unalias -a
-
-function set_hostname(){
-    local hostname=$1
-    if [[ $hostname =~ '_' ]];then
-        color_echo $yellow "hostname can't contain '_' character, auto change to '-'.."
-        hostname=`echo $hostname|sed 's/_/-/g'`
-    fi
-    echo "set hostname: $(color_echo $green $hostname)"
-    run_command "hostnamectl set-hostname $hostname"
-}
-
-function add_virtual_ip() {
-    local public_ip=$1
-    local interface=$2
-    # 检查公网 IP 是否存在
-    echo "add_virtual_ip public_ip: $public_ip interface: $interface"
-    if ip a | grep -q "$public_ip"; then
-        color_echo ${fuchsia} "IP $public_ip already exists."
-    else
-        log "IP $public_ip does not exist. Adding virtual IP..."
-        # 创建虚拟网卡配置
-        cat > /etc/sysconfig/network-scripts/ifcfg-${interface}:1 <<EOF
-BOOTPROTO=static
-DEVICE=${interface}:1
-IPADDR=$public_ip
-PREFIX=32
-TYPE=Ethernet
-USERCTL=no
-ONBOOT=yes
-EOF
-        # 启用新的虚拟网卡
-        if ifup ${interface}:1; then
-            log "Successfully added virtual IP $public_ip."
-            # 重启网络
-	        run_command "systemctl restart network"
-        else
-            color_echo ${red} "Failed to add virtual IP $public_ip."
-        fi
-    fi
-}
-
 function install_depend(){
     run_command "/bin/bash yum-packages.sh online_download_dependency $KUBE_VERSION $IS_MASTER"
     log "安装所需依赖"
@@ -63,11 +20,11 @@ function prepare_work() {
     fi
     # 安装依赖
 	run_command "/bin/bash setupconfig.sh source_chrony"
+	run_command "/bin/bash setupconfig.sh update_ipvs_conf"
     run_command "/bin/bash setupconfig.sh update_kubernetes_conf"
 	run_command "/bin/bash setupconfig.sh rest_firewalld"
 	run_command "/bin/bash setupconfig.sh disable_swapoff"
 	run_command "/bin/bash setupconfig.sh disabled_selinux"
-	run_command "/bin/bash setupconfig.sh update_ipvs_conf"
 	run_command "/bin/bash setupconfig.sh update_k8s_module_conf"
 	run_command "/bin/bash setupconfig.sh update_limits_conf"
 	run_command "/bin/bash setupconfig.sh update_containerd_conf $GLOBAL_IMAGE_REPOSITORY $KUBE_PAUSE_VERSION $CONTAINERD_TIME_OUT"
@@ -91,7 +48,7 @@ function upload_hosts {
             fi
         done < "conf/hosts"
         # 重启网络
-        run_command "systemctl restart network"
+        restart_network
         log "${update_host_prompt} OK"
     else
         color_echo ${fuchsia} "conf/hosts file not found. Skipping."
@@ -194,9 +151,11 @@ function init_master() {
     find addons -name "*.yaml" -exec sed -i.bak 's|{{CNI_NET_PATH}}|'"$CNI_NET_PATH"'|g' {} \;
     find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_FLANNEL_CFG_MOUNTPATH}}|'"$KUBE_FLANNEL_CFG_MOUNTPATH"'|g' {} \;
     find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_FLANNEL_RUN_MOUNTPATH}}|'"$KUBE_FLANNEL_RUN_MOUNTPATH"'|g' {} \;
+    find addons -name "*.yaml" -exec sed -i.bak 's|{{CALICO_IPV4POOL_CIDR}}|'"$CALICO_IPV4POOL_CIDR"'|g' {} \;
+    find addons -name "*.yaml" -exec sed -i.bak 's|{{CALICO_IPV4POOL_IPIP}}|'"$CALICO_IPV4POOL_IPIP"'|g' {} \;
 
     log "初始化Kube Master"
-    kubeadm init --config kubeadm-init.yaml --v=5 2>&1 | tee -a ${__current_dir}/install.log && \
+    run_command "kubeadm init --config kubeadm-init.yaml --v=5" && \
     bak_kube_config && \
     install_network_plugin && \
     poll_k8s_ready && \
@@ -263,7 +222,7 @@ function slave_join(){
 
 function sub_slave_rely(){
     log "创建Kube Node连接所需要的Token"
-    kubeadm token create --print-join-command --ttl=0 2>&1 | tee -a ${__current_dir}/install.log
+    run_command "kubeadm token create --print-join-command --ttl=0"
     log "开始组装slave安装包"
     rm -rf $NODE_PACKAGE_PATH
     mkdir -p $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
@@ -281,22 +240,22 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -p|--port)
         KUBE_BIND_PORT=$2
-        echo "prepare install k8s bind port: $(color_echo $green $KUBE_BIND_PORT)"
+        echo "prepare install k8s bind port: $(color_title $green $KUBE_BIND_PORT)"
         shift
         ;;
         -v | --version)
         KUBE_VERSION=$(echo "$2" | sed 's/v//g')
-        echo "prepare install k8s version: $(color_echo $green $KUBE_VERSION)"
+        echo "prepare install k8s version: $(color_title $green $KUBE_VERSION)"
         shift
         ;;
         -addr | --advertise_address)
         KUBE_ADVERTISE_ADDRESS=$2
-        echo "prepare install k8s advertise_address: $(color_echo $green $KUBE_ADVERTISE_ADDRESS)"
+        echo "prepare install k8s advertise_address: $(color_title $green $KUBE_ADVERTISE_ADDRESS)"
         shift
         ;;
         -tk|--token)
         KUBE_TOKEN=$2
-        echo "prepare install k8s token: $(color_echo $green $KUBE_TOKEN)"
+        echo "prepare install k8s token: $(color_title $green $KUBE_TOKEN)"
         shift
         ;;
         -hname | --hostname)
@@ -305,42 +264,42 @@ while [[ $# -gt 0 ]]; do
         shift
         ;;
         --flannel)
-        echo "use $(color_echo $green flannel ) network, and set this node as master"
+        echo "use $(color_title $green flannel ) network, and set this node as master"
         KUBE_NETWORK="flannel"
         IS_MASTER=1
         ;;
         --calico)
-        echo "use $(color_echo $green calico )  network, and set this node as master"
+        echo "use $(color_title $green calico )  network, and set this node as master"
         KUBE_NETWORK="calico"
         IS_MASTER=1
         ;;
         --slavepath)
         NODE_PACKAGE_PATH=$2
-        echo "slave packaged path: $(color_echo $green $NODE_PACKAGE_PATH)"
+        echo "slave packaged path: $(color_title $green $NODE_PACKAGE_PATH)"
         ;;
         --image-repository)
         GLOBAL_IMAGE_REPOSITORY=$2
-        echo "use image-repository is: $(color_echo $green $GLOBAL_IMAGE_REPOSITORY)"
+        echo "use image-repository is: $(color_title $green $GLOBAL_IMAGE_REPOSITORY)"
         ;;
         --addons-repository)
         ADDONS_IMAGE_REPOSITORY=$2
-        echo "use addons-image-repository is: $(color_echo $green $ADDONS_IMAGE_REPOSITORY)"
+        echo "use addons-image-repository is: $(color_title $green $ADDONS_IMAGE_REPOSITORY)"
         ;;
         --image-pull-policy)
         KUBE_IMAGE_PULL_POLICY=$2
-        echo "use image-pull-policy is: $(color_echo $green $KUBE_IMAGE_PULL_POLICY)"
+        echo "use image-pull-policy is: $(color_title $green $KUBE_IMAGE_PULL_POLICY)"
         ;;
         --containerd-timeout)
         CONTAINERD_TIME_OUT=$2
-        echo "containerd-timeout is: $(color_echo $green $CONTAINERD_TIME_OUT)"
+        echo "containerd-timeout is: $(color_title $green $CONTAINERD_TIME_OUT)"
         ;;
         --pod-subnet)
         KUBE_POD_SUBNET=$2
-        echo "pod-subnet is: $(color_echo $green $KUBE_POD_SUBNET)"
+        echo "pod-subnet is: $(color_title $green $KUBE_POD_SUBNET)"
         ;;
         --serviceSubnet)
         KUBE_SERVICE_SUBNET=$2
-        echo "serviceSubnet is: $(color_echo $green $KUBE_SERVICE_SUBNET)"
+        echo "serviceSubnet is: $(color_title $green $KUBE_SERVICE_SUBNET)"
         ;;
         --join)
         KUBE_JOIN_MODE=1
@@ -352,7 +311,7 @@ while [[ $# -gt 0 ]]; do
             exit 1
         fi
         MASTER_IP=$2
-        echo "Master IP set to: $(color_echo $green $MASTER_IP)"
+        echo "Master IP set to: $(color_title $green $MASTER_IP)"
         shift
         ;;
         --discovery-token-ca-cert-hash)
@@ -361,11 +320,11 @@ while [[ $# -gt 0 ]]; do
             exit 1
         fi
         DISCOVERY_TOKEN_CA_CERT_HASH=$2
-        echo "Discovery token CA cert hash set to: $(color_echo $green $DISCOVERY_TOKEN_CA_CERT_HASH)"
+        echo "Discovery token CA cert hash set to: $(color_title $green $DISCOVERY_TOKEN_CA_CERT_HASH)"
         shift
         ;;
-        -vrip|--virtualip)
-        add_virtual_ip "$KUBE_ADVERTISE_ADDRESS" "eth0"
+        -create-vreth|--create-virtualeth)
+        add_virtual_ip "$KUBE_ADVERTISE_ADDRESS" $VIRTUALETH_BACK_PREFIX
         ;;
         -h|--help)
         echo "Usage: $0 [options]"
@@ -387,7 +346,7 @@ while [[ $# -gt 0 ]]; do
         echo "   --join                                      join the Kubernetes cluster"
         echo "   --masterip                                  master node IP address"
         echo "   --discovery-token-ca-cert-hash              discovery token CA cert hash"
-        echo "   -vrip|--virtualip                           default=false"
+        echo "   -create-vreth|--create-virtualeth           default=false"
         echo "   -h, --help                                  find help"
         echo "   Master: sh install-kube.sh -v v1.23.3 -addr $INTRANET_IP --flannel"
         echo "   Slave:  sh install-kube.sh "
@@ -405,9 +364,9 @@ done
 
 main() {
     check_sys
+    upload_hosts
     install_depend
     prepare_work
-    upload_hosts
     load_images
     if [[ $IS_MASTER == 1 ]]; then
         init_master

@@ -24,13 +24,13 @@ function download_all_packages() {
     log "没有带参数,故下载到的依赖可前往${TZ_BASE}进行查看"
   fi
   log "开始下载依赖包"
-  yum -y install --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/base-dependence ipset ipvsadm vim wget tree curl bash-completion jq vim net-tools telnet git unzip lrzsz bridge-utils telnet iputils chrony ntpdate
-  yum -y install --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/bash-completion bash-completion
-  yum -y install --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/docker-before yum-utils device-mapper-persistent-data lvm2 oniguruma
-  yum -y install --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/docker docker-ce docker-ce-cli
-  yum -y install --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/conntrack crictl conntrack
-  yum -y install --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/containerd containerd containerd.io
-  yum -y install --disableexcludes=kubernetes --nogpgcheck --downloadonly --downloaddir=${TZ_BASE}/$TARZAN_OFFLINE_PATH/k8s kubelet kubeadm kubectl
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/base-dependence ipset ipvsadm  wget tree curl jq vim net-tools unzip telnet iputils chrony
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/bash-completion bash-completion
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/docker-before device-mapper-persistent-data lvm2 yum-utils
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/docker docker-ce docker-ce-cli docker-compose
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/conntrack  conntrack
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/containerd crictl containerd.io
+  yum -y install --disableexcludes=kubernetes --nogpgcheck --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/k8s kubelet kubeadm kubectl
   log "Download Yum Rpm 依赖包下载完成"
 }
 
@@ -69,7 +69,7 @@ function offline_install_kube(){
       log "开始离线安装kubelet kubeadm kubectl"
       rpm -ivhU $TARZAN_OFFLINE_PATH/k8s/$KUBE_VERSION/*.rpm --nodeps --force
       new_k8s_version=$(kubectl version --output=yaml|grep gitVersion|awk 'NR==1{print $2}')
-      log "离线安装kubelet kubeadm kubectl OK,k8s version: $(color_echo $green $new_k8s_version)"
+      log "离线安装kubelet kubeadm kubectl OK,k8s version: $(color_title $green $new_k8s_version)"
       log "开始离线安装bash-completion命令补全工具"
       rpm -ivhU $TARZAN_OFFLINE_PATH/bash-completion/*.rpm --nodeps --force
       log "写入bash-completion环境变量"

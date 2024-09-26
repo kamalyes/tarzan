@@ -2,8 +2,8 @@ kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
-  name: kubernetes-dashboard
+    k8s-app: kube-dashboard
+  name: kube-dashboard
 rules:
   # Allow Metrics Scraper to get metrics from the Metrics server
   - apiGroups: ["metrics.k8s.io"]
@@ -16,29 +16,29 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
-  name: kubernetes-dashboard
-  namespace: kubernetes-dashboard
+    k8s-app: kube-dashboard
+  name: kube-dashboard
+  namespace: kube-dashboard
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: kubernetes-dashboard
+  name: kube-dashboard
 subjects:
   - kind: ServiceAccount
-    name: kubernetes-dashboard
-    namespace: kubernetes-dashboard
+    name: kube-dashboard
+    namespace: kube-dashboard
 
 ---
 
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: kubernetes-dashboard
+  name: kube-dashboard
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kubernetes-dashboard
+  name: kube-dashboard
 subjects:
   - kind: ServiceAccount
-    name: kubernetes-dashboard
-    namespace: kubernetes-dashboard
+    name: kube-dashboard
+    namespace: kube-dashboard

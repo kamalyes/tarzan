@@ -15,7 +15,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: kubernetes-dashboard
+  name: kube-dashboard
 
 ---
 
@@ -23,9 +23,9 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
-  name: kubernetes-dashboard
-  namespace: kubernetes-dashboard
+    k8s-app: kube-dashboard
+  name: kube-dashboard
+  namespace: kube-dashboard
 
 ---
 
@@ -33,9 +33,9 @@ kind: Service
 apiVersion: v1
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
-  name: kubernetes-dashboard
-  namespace: kubernetes-dashboard
+    k8s-app: kube-dashboard
+  name: kube-dashboard
+  namespace: kube-dashboard
 spec:
   type: NodePort  # 新增
   ports:
@@ -43,7 +43,7 @@ spec:
       targetPort: 8443
       nodePort: 30009  # 新增
   selector:
-    k8s-app: kubernetes-dashboard
+    k8s-app: kube-dashboard
 
 ---
 
@@ -51,10 +51,13 @@ apiVersion: v1
 kind: Secret
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
+    k8s-app: kube-dashboard
   name: kubernetes-dashboard-certs
-  namespace: kubernetes-dashboard
+  namespace: kube-dashboard
 type: Opaque
+data:
+  tls.crt: {{KUBE_DASHBOARD_BASE64_ENCODED_CERT}}
+  tls.key: {{KUBE_DASHBOARD_BASE64_ENCODED_KEY}}
 
 ---
 
@@ -62,9 +65,9 @@ apiVersion: v1
 kind: Secret
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
+    k8s-app: kube-dashboard
   name: kubernetes-dashboard-csrf
-  namespace: kubernetes-dashboard
+  namespace: kube-dashboard
 type: Opaque
 data:
   csrf: ""
@@ -75,9 +78,9 @@ apiVersion: v1
 kind: Secret
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
+    k8s-app: kube-dashboard
   name: kubernetes-dashboard-key-holder
-  namespace: kubernetes-dashboard
+  namespace: kube-dashboard
 type: Opaque
 
 ---
@@ -86,9 +89,9 @@ kind: ConfigMap
 apiVersion: v1
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
+    k8s-app: kube-dashboard
   name: kubernetes-dashboard-settings
-  namespace: kubernetes-dashboard
+  namespace: kube-dashboard
 
 ---
 
@@ -96,9 +99,9 @@ kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
-  name: kubernetes-dashboard
-  namespace: kubernetes-dashboard
+    k8s-app: kube-dashboard
+  name: kube-dashboard
+  namespace: kube-dashboard
 rules:
   # Allow Dashboard to get, update and delete Dashboard exclusive secrets.
   - apiGroups: [""]
@@ -126,25 +129,25 @@ kind: Deployment
 apiVersion: apps/v1
 metadata:
   labels:
-    k8s-app: kubernetes-dashboard
-  name: kubernetes-dashboard
-  namespace: kubernetes-dashboard
+    k8s-app: kube-dashboard
+  name: kube-dashboard
+  namespace: kube-dashboard
 spec:
   replicas: 1
   revisionHistoryLimit: 10
   selector:
     matchLabels:
-      k8s-app: kubernetes-dashboard
+      k8s-app: kube-dashboard
   template:
     metadata:
       labels:
-        k8s-app: kubernetes-dashboard
+        k8s-app: kube-dashboard
     spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: kubernetes-dashboard
+        - name: kube-dashboard
           image: {{ADDONS_IMAGE_REPOSITORY}}/kube-dashboard:v2.5.1
           imagePullPolicy: Always
           ports:
@@ -152,7 +155,7 @@ spec:
               protocol: TCP
           args:
             - --auto-generate-certificates
-            - --namespace=kubernetes-dashboard
+            - --namespace=kube-dashboard
             # Uncomment the following line to manually specify Kubernetes API server Host
             # If not specified, Dashboard will attempt to auto discover the API server and connect
             # to it. Uncomment only if the default does not work.
@@ -181,7 +184,7 @@ spec:
             secretName: kubernetes-dashboard-certs
         - name: tmp-volume
           emptyDir: {}
-      serviceAccountName: kubernetes-dashboard
+      serviceAccountName: kube-dashboard
       nodeSelector:
         "kubernetes.io/os": linux
       # Comment the following tolerations if Dashboard must not be deployed on master
@@ -197,7 +200,7 @@ metadata:
   labels:
     k8s-app: dashboard-metrics-scraper
   name: dashboard-metrics-scraper
-  namespace: kubernetes-dashboard
+  namespace: kube-dashboard
 spec:
   ports:
     - port: 8000
@@ -213,7 +216,7 @@ metadata:
   labels:
     k8s-app: dashboard-metrics-scraper
   name: dashboard-metrics-scraper
-  namespace: kubernetes-dashboard
+  namespace: kube-dashboard
 spec:
   replicas: 1
   revisionHistoryLimit: 10
@@ -249,7 +252,7 @@ spec:
             readOnlyRootFilesystem: true
             runAsUser: 1001
             runAsGroup: 2001
-      serviceAccountName: kubernetes-dashboard
+      serviceAccountName: kube-dashboard
       nodeSelector:
         "kubernetes.io/os": linux
       # Comment the following tolerations if Dashboard must not be deployed on master

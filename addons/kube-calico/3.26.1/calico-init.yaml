@@ -1,3 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-calico
 ---
 # Source: calico/templates/calico-kube-controllers.yaml
 # This manifest creates a Pod Disruption Budget for Controller to allow K8s Cluster Autoscaler to evict
@@ -6,7 +10,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: calico-kube-controllers
-  namespace: kube-system
+  namespace: kube-calico
   labels:
     k8s-app: calico-kube-controllers
 spec:
@@ -20,21 +24,21 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: calico-kube-controllers
-  namespace: kube-system
+  namespace: kube-calico
 ---
 # Source: calico/templates/calico-node.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: calico-node
-  namespace: kube-system
+  namespace: kube-calico
 ---
 # Source: calico/templates/calico-node.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: calico-cni-plugin
-  namespace: kube-system
+  namespace: kube-calico
 ---
 # Source: calico/templates/calico-config.yaml
 # This ConfigMap is used to configure a self-hosted Calico installation.
@@ -42,7 +46,7 @@ kind: ConfigMap
 apiVersion: v1
 metadata:
   name: calico-config
-  namespace: kube-system
+  namespace: kube-calico
 data:
   # Typha is disabled.
   typha_service_name: "none"
@@ -4563,7 +4567,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: calico-kube-controllers
-  namespace: kube-system
+  namespace: kube-calico
 ---
 # Source: calico/templates/calico-node-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4577,7 +4581,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: calico-node
-  namespace: kube-system
+  namespace: kube-calico
 ---
 # Source: calico/templates/calico-node-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4591,7 +4595,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: calico-cni-plugin
-  namespace: kube-system
+  namespace: kube-calico
 ---
 # Source: calico/templates/calico-node.yaml
 # This manifest installs the calico-node container, as well
@@ -4601,7 +4605,7 @@ kind: DaemonSet
 apiVersion: apps/v1
 metadata:
   name: calico-node
-  namespace: kube-system
+  namespace: kube-calico
   labels:
     k8s-app: calico-node
 spec:
@@ -4769,7 +4773,7 @@ spec:
               value: "autodetect"
             # Enable IPIP
             - name: CALICO_IPV4POOL_IPIP
-              value: "Always"
+              value: "{{CALICO_IPV4POOL_IPIP}}"
             # Enable or Disable VXLAN on the default IP pool.
             - name: CALICO_IPV4POOL_VXLAN
               value: "Never"
@@ -4797,8 +4801,8 @@ spec:
             # The default IPv4 pool to create on startup if none exists. Pod IPs will be
             # chosen from this range. Changing this value after installation will have
             # no effect. This should fall within `--cluster-cidr`.
-            # - name: CALICO_IPV4POOL_CIDR
-            #   value: "192.168.0.0/16"
+            - name: CALICO_IPV4POOL_CIDR
+              value: "{{CALICO_IPV4POOL_CIDR}}"
             # Disable file logging so `kubectl logs` works.
             - name: CALICO_DISABLE_FILE_LOGGING
               value: "true"
@@ -4921,7 +4925,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: calico-kube-controllers
-  namespace: kube-system
+  namespace: kube-calico
   labels:
     k8s-app: calico-kube-controllers
 spec:
@@ -4935,7 +4939,7 @@ spec:
   template:
     metadata:
       name: calico-kube-controllers
-      namespace: kube-system
+      namespace: kube-calico
       labels:
         k8s-app: calico-kube-controllers
     spec:

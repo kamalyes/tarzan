@@ -36,56 +36,102 @@ gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
 EOF
     log "Kubernetes YUM 仓库配置写入成功"
   else
-    log "Kubernetes YUM 仓库配置已存在，跳过写入"
+    log "Kubernetes YUM 仓库配置已存在,跳过写入"
   fi
   
   run_command "mkdir -p $SYSCTLD_PATH"
   run_command "chmod 751 -R $SYSCTLD_PATH"
 
-  # 添加Kubernetes系统配置
+  # 优化系统参数
 cat <<EOF > $KUBERNETES_CONFIG
-# 开启数据包转发功能(实现vxlan)
-net.ipv4.ip_forward=1
+
+# 基于内存的自定义网络参数
+
+### 系统级别能够打开的文件句柄的数量。直接限制最大并发连接数。
+### 是对整个系统的限制,并不是针对用户的。
+### 根据内存动态计算的值
+fs.file-max = $FS_FILE_MAX
+
+### 当每个网络接口接受数据包的速率比内核处理速率快时,允许发送到队列的数据包的最大数。
+net.core.netdev_max_backlog = $NETDEV_MAX_BACKLOG
+
+### 调节系统同时发起的TCP连接数。高并发情况下,该值越小,越容易出现超时情况。
+# net.core.somaxconn = $SOMAXCONN
+
+# see details in https://help.aliyun.com/knowledge_detail/41334.html
+### 设定系统中最多允许存在多少TCP套接字不被关联到任何一个用户文件句柄上。
+net.ipv4.tcp_max_orphans = $TCP_MAX_ORPHANS
+
+### 记录尚未收到客户端确认信息的连接请求的最大值(三次握手建立阶段接受SYN请求)
+net.ipv4.tcp_max_syn_backlog = $TCP_MAX_SYN_BACKLOG
+
+### 设置内核放弃TCP连接之前向客户端发送SYN+ACK包的数据(三次握手中的第二次握手)
+net.ipv4.tcp_synack_retries = $TCP_SYNACK_RETRIES
+
+### 设置内核放弃建立连接之前向客户端发送SYN包的数据。
+net.ipv4.tcp_syn_retries = $TCP_SYN_RETRIES
+
+### 放大本地端口范围。
+net.ipv4.ip_local_port_range = $IP_LOCAL_PORT_RANGE
+
+### 表示某个TCP连接在空闲7200秒后,内核才发起探测,探测9次(每次75秒)不成功,内核才发送RST。
+net.ipv4.tcp_keepalive_intvl = $TCP_KEEPALIVE_INTVL
+net.ipv4.tcp_keepalive_probes = $TCP_KEEPALIVE_PROBES
+net.ipv4.tcp_keepalive_time = $TCP_KEEPALIVE_TIME
+
+net.ipv6.conf.all.disable_ipv6 = $DISABLE_IPV6
+net.ipv6.conf.default.disable_ipv6 = $DISABLE_IPV6
+net.ipv6.conf.lo.disable_ipv6 = $DISABLE_IPV6
+
+### 启用IPV4 转发
+net.ipv4.ip_forward = $TCP_IP_FORWARD
+
+### 启用Cookies来处理,可防范部分SYN攻击,当出现SYN等待队列溢出时也可继续连接。
+net.ipv4.tcp_syncookies = $TCP_SYN_COOKIES
+
+### 如果socket由服务端要求关闭,则该参数决定了保持在FIN-WAIT-2状态的时间。
+net.ipv4.tcp_fin_timeout = $TCP_FIN_TIMEOUT
+
+### timewait的数量,最大值为262144。如果超过这个数字,TIME_WAIT套接字将立刻被清除并打印警告信息。
+net.ipv4.tcp_max_tw_buckets = $TCP_MAX_TW_BUCKETS
+
+### 设置时间戳,避免序列号的卷绕。
+net.ipv4.tcp_timestamps = $TCP_TIMESTAMPS
+
+### 允许将TIME-WAIT状态的sockets重新用于新的TCP连接
+net.ipv4.tcp_tw_reuse = $TCP_TW_REUSE
+
+### 以下4个参数,需要根据业务逻辑和实际的硬件成本来综合考虑
+net.core.rmem_default = $RMEM_DEFAULT
+net.core.wmem_default = $WMEM_DEFAULT
+net.core.rmem_max = $RMEM_MAX
+net.core.wmem_max = $WMEM_MAX
+
+### TCP接收socket请求缓存的内存最小值、默认值、最大值
+net.ipv4.tcp_rmem = $TCP_RMEM
+
+### TCP发送socket请求缓存的内存最小值、默认值、最大值
+net.ipv4.tcp_wmem = $TCP_WMEM
 
 # iptables对bridge的数据进行处理
-net.bridge.bridge-nf-call-iptables=1
-net.bridge.bridge-nf-call-ip6tables=1
-net.bridge.bridge-nf-call-arptables=1
-
-# 不允许将TIME-WAIT sockets重新用于新的TCP连接
-net.ipv4.tcp_tw_reuse=0
-
-# socket监听(listen)的backlog上限
-net.core.somaxconn=32768
-
-# 最大跟踪连接数, 默认 nf_conntrack_buckets * 4
-net.netfilter.nf_conntrack_max=1000000
+net.bridge.bridge-nf-call-iptables=$NET_BRIDGE_NF_CALL_IPTABLES
+net.bridge.bridge-nf-call-ip6tables=$NET_BRIDGE_NF_CALL_IPTABLES
+net.bridge.bridge-nf-call-arptables=$NET_BRIDGE_NF_CALL_IPTABLES
 
 # 禁止使用 swap 空间, 只有当系统 OOM 时才允许使用它
-vm.swappiness=0
-
+vm.swappiness=$VM_SWAPPINESS
 # 计算当前的内存映射文件数
-vm.max_map_count=655360
-
-# 内核可分配的最大文件数
-fs.file-max=6553600
-
-# 持久连接
-net.ipv4.tcp_keepalive_time=600
-net.ipv4.tcp_keepalive_intvl=30
-net.ipv4.tcp_keepalive_probes=10
+vm.max_map_count=$VM_MAX_MAP_COUNT
 EOF
 
-log "Kubernetes系统配置写入成功"
-
-  # 检查内核版本，决定是否添加 tcp_tw_recycle
+  # 检查内核版本,决定是否添加 tcp_tw_recycle
   if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
     # 原因：linux>4.12内核版本不兼容
     color_echo ${fuchsia} "检测到内核版本 $KERNEL_VERSION,跳过 tcp_tw_recycle 配置。"
   else
-    echo "# 关闭tcp_tw_recycle,否则和NAT冲突,会导致服务不通" >> "$KUBERNETES_CONFIG"
-    echo "net.ipv4.tcp_tw_recycle=0" >> "$KUBERNETES_CONFIG"
-    log "tcp_tw_recycle配置添加成功"
+    log "添加tcp_tw_recycle配置"
+    echo "### TCP连接中TIME-WAIT的sockets快速回收功能" >> "$KUBERNETES_CONFIG"
+    echo "net.ipv4.tcp_tw_recycle = $TCP_TW_RECYCLE" >> "$KUBERNETES_CONFIG"
   fi
 
   log "创建kube所需文件夹、重新加载配置"
@@ -93,6 +139,8 @@ log "Kubernetes系统配置写入成功"
   run_command "chmod 777 -R $KUBELET_IJOIN_PATH"
   run_command "mkdir -p $KUBERNETES_PATH"
   run_command "chmod 777 -R $KUBERNETES_PATH"
+  
+  log "应用新的 sysctl 设置"
   run_command "sysctl -p $KUBERNETES_CONFIG"
 }
 
@@ -119,11 +167,11 @@ function rest_firewalld() {
 
 function disable_swapoff() {
   log "关闭swap"
-  #（临时的,只针对当前会话起作用,若会话关闭,重开还是会开启内存交换,所以使用下面一行命令即可）
+  #(临时的,只针对当前会话起作用,若会话关闭,重开还是会开启内存交换,所以使用下面一行命令即可)
   run_command "swapoff -a"
   # 永久关闭swap
   run_command "sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab"
-  # 验证swap状态，输出内存使用情况
+  # 验证swap状态,输出内存使用情况
   log "验证swap状态"
   run_command "free -g"
 }
@@ -141,9 +189,6 @@ function disabled_selinux() {
 }
 
 function update_ipvs_conf() {
-  log "开启ipv4转发"
-	echo "1" >> /proc/sys/net/ipv4/ip_forward
-
   log "配置ipvs功能"
   
   # 加载所需的内核模块
@@ -156,13 +201,12 @@ function update_ipvs_conf() {
   if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
       # 仅在内核版本 <= 4.12 时加载模块
       color_echo ${fuchsia} "配置 nf_conntrack_ipv4  br_netfilter "
-      echo "modprobe -- nf_conntrack_ipv4" >> $IPVS_MODULES_CONF
-      echo "modprobe -- br_netfilter" >> $IPVS_MODULES_CONF
+      echo "modprobe -- nf_conntrack_ipv4"
+      echo "modprobe -- br_netfilter"
   else
       # 原因：linux > 4.12内核版本不兼容
       color_echo ${fuchsia} "跳过 modprobe nf_conntrack_ipv4 和 br_netfilter 配置"
   fi
-  run_command "modprobe br_netfilter"
   run_command "modprobe overlay"
 }
 
@@ -176,13 +220,13 @@ ip_vs_rr
 ip_vs_wrr
 ip_vs_sh
 nf_conntrack
-br_netfilter
 overlay
 EOF
 
   if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
     color_echo ${fuchsia} "配置 nf_conntrack_ipv4 "
     echo "nf_conntrack_ipv4" >> "$KUBERNETES_MODULES_CONF"
+    echo "br_netfilter" >> "$KUBERNETES_MODULES_CONF"
   else
     # 原因：linux>4.12内核版本不兼容
     color_echo ${fuchsia} "跳过 modprobe nf_conntrack_ipv4 配置"
@@ -221,7 +265,7 @@ function update_limits_conf() {
     "* hard memlock unlimited"
   )
 
-  # 遍历配置行，检查是否已存在，若不存在则写入
+  # 遍历配置行,检查是否已存在,若不存在则写入
   for limit in "${limits[@]}"; do
     if ! grep -Fxq "$limit" "$SECURITY_LIMITS_CONF"; then
       echo "$limit" | run_command "tee -a $SECURITY_LIMITS_CONF"

@@ -50,29 +50,26 @@ Kubernetes version dashboard version 备注
 
 ```shell
 # 这个也是一种生成证书的一种方式：
-openssl genrsa -out dashboard.key 2048 
-openssl req -new -out dashboard.csr -key dashboard.key -subj '/CN={{IP地址}}'
-openssl x509 -req -days 3650 -in dashboard.csr -signkey dashboard.key -out dashboard.crt
+openssl genrsa -out tls.key 2048 
+openssl req -new -out tls.csr -key tls.key -subj '/CN={{IP地址}}'
+openssl x509 -req -days 3650 -in tls.csr -signkey tls.key -out tls.crt
 ```
 
 # 下面是生成证书的另一种方式
 
 ```shell
-# 创建一个用于自签证书的目录
-[root@k8s-master ~]# mkdir kubernetes-dashboard-key && cd kubernetes-dashboard-key
-
 # 生成证书请求的key
-[root@k8s-master kubernetes-dashboard-key]# openssl genrsa -out dashboard.key 2048
+[root@k8s-master kube-dashboard]# openssl genrsa -out tls.key 2048
 Generating RSA private key, 2048 bit long modulus
 .........................+++
 ...................................................+++
 e is 65537 (0x10001)
 
 # 生成证书请求
-[root@k8s-master kubernetes-dashboard-key]# openssl req -days 3650 -new -out dashboard.csr -key dashboard.key -subj '/CN={{IP地址}}'
+[root@k8s-master kube-dashboard]# openssl req -days 3650 -new -out tls.csr -key tls.key -subj '/CN={{IP地址}}'
 
 # 生成自签证书
-[root@k8s-master kubernetes-dashboard-key]# openssl x509 -req -in dashboard.csr -signkey dashboard.key -out dashboard.crt
+[root@k8s-master kube-dashboard]# openssl x509 -req -in tls.csr -signkey tls.key -out tls.crt
 Signature ok
 subject=/CN={{IP地址}}
 Getting Private key
@@ -81,20 +78,20 @@ Getting Private key
 2.删除原有证书
 
 ```bash
-[root@k8s-master kubernetes-dashboard-key]# kubectl get secret kubernetes-dashboard-certs -n kubernetes-dashboard
+[root@k8s-master kube-dashboard]# kubectl get secret kubernetes-dashboard-certs -n kube-dashboard
 NAME                         TYPE     DATA   AGE
 kubernetes-dashboard-certs   Opaque   0      123m
 You have new mail in /var/spool/mail/root
-[root@k8s-master kubernetes-dashboard-key]# kubectl delete secret kubernetes-dashboard-certs -n kubernetes-dashboard
+[root@k8s-master kube-dashboard]# kubectl delete secret kubernetes-dashboard-certs -n kube-dashboard
 secret "kubernetes-dashboard-certs" deleted
 
-kubectl create secret generic kubernetes-dashboard-certs --from-file=dashboard.key --from-file=dashboard.crt -n kubernetes-dashboard
+kubectl create secret generic kubernetes-dashboard-certs --from-file=tls.key --from-file=tls.crt -n kube-dashboard
 ```
 
 4.查看dashboard的pod
 
 ```bash
-[root@k8s-master kubernetes-dashboard-key]# kubectl get pod -n kubernetes-dashboard  | grep dashboard
+[root@k8s-master kube-dashboard]# kubectl get pod -n kube-dashboard  | grep dashboard
 dashboard-metrics-scraper-7645f69d8c-86dxq   1/1     Running   0          127m
 kubernetes-dashboard-78cb679857-x4hpw        1/1     Running   0          127m
 
@@ -104,16 +101,16 @@ kubernetes-dashboard-78cb679857-x4hpw        1/1     Running   0          127m
 5.删除原有pod即可（会自动创建新的pod）
 
 ```bash
-[root@k8s-master kubernetes-dashboard-key]# kubectl delete pod kubernetes-dashboard-78cb679857-x4hpw -n kubernetes-dashboard
+[root@k8s-master kube-dashboard]# kubectl delete pod kubernetes-dashboard-78cb679857-x4hpw -n kube-dashboard
 pod "kubernetes-dashboard-78cb679857-x4hpw" deleted
 
 #再次查看，pod 正在创建中
-[root@k8s-master kubernetes-dashboard-key]# kubectl get pod -n kubernetes-dashboard  | grep dashboard
+[root@k8s-master kube-dashboard]# kubectl get pod -n kube-dashboard  | grep dashboard
 dashboard-metrics-scraper-7645f69d8c-86dxq   1/1     Running             0          133m
 kubernetes-dashboard-78cb679857-fmv7w        0/1     ContainerCreating   0          29s
 
 #创建好了
-[root@k8s-master kubernetes-dashboard-key]# kubectl get pod -n kubernetes-dashboard  | grep dashboard
+[root@k8s-master kube-dashboard]# kubectl get pod -n kube-dashboard  | grep dashboard
 dashboard-metrics-scraper-7645f69d8c-86dxq   1/1     Running   0          141m
 kubernetes-dashboard-78cb679857-n4hlf        1/1     Running   0          3m57s
 ```
@@ -123,9 +120,9 @@ kubernetes-dashboard-78cb679857-n4hlf        1/1     Running   0          3m57s
 2.5 获取访问所需要的Token：
 
 ```bash
-[root@k8s-master ~]# kubectl -n kubernetes-dashboard describe secret $(kubectl -n kubernetes-dashboard get secret | grep kubernetes-admin | awk '{print $1}')
+[root@k8s-master ~]# kubectl -n kube-dashboard describe secret $(kubectl -n kube-dashboard get secret | grep kubernetes-admin | awk '{print $1}')
 Name:         admin-user-token-khrll
-Namespace:    kubernetes-dashboard
+Namespace:    kube-dashboard
 Labels:       <none>
 Annotations:  kubernetes.io/service-account.name: admin-user
               kubernetes.io/service-account.uid: 266c923b-ed2f-471b-a8fc-1dde3cc10205
