@@ -2,14 +2,21 @@
 source ./common.sh
 
 function install_depend(){
-    run_command "/bin/bash yum-packages.sh online_download_dependency $KUBE_VERSION $IS_MASTER"
-    log "安装所需依赖"
-    run_command "/bin/bash yum-packages.sh offline_install_public_dependency"
-    if [[ $IS_MASTER == 1 ]]; then
-        run_command "/bin/bash yum-packages.sh offline_install_docker"
-        run_command "/bin/bash yum-packages.sh offline_install_dockercompose"
+    # 云厂商端点自适应(主进程覆盖变量, 供后续 setupconfig 写入正确 repo)
+    ensure_cloud_mirrors
+    if [[ $OFFLINE_SUPPORTED == 1 ]]; then
+        run_command "/bin/bash yum-packages.sh online_download_dependency $KUBE_VERSION $IS_MASTER"
+        log "安装所需依赖"
+        run_command "/bin/bash yum-packages.sh offline_install_public_dependency"
+        if [[ $IS_MASTER == 1 ]]; then
+            run_command "/bin/bash yum-packages.sh offline_install_docker"
+            run_command "/bin/bash yum-packages.sh offline_install_dockercompose"
+        fi
+        run_command "/bin/bash yum-packages.sh offline_install_kube $KUBE_VERSION"
+    else
+        log "当前系统($OS_ID $OS_VERSION)不支持离线包(el7 RPM), 走在线安装"
+        run_command "/bin/bash yum-packages.sh online_install_dependency $KUBE_VERSION $IS_MASTER"
     fi
-    run_command "/bin/bash yum-packages.sh offline_install_kube $KUBE_VERSION"
 }
 
 function prepare_work() {
@@ -41,14 +48,13 @@ function upload_hosts {
 
         # 逐行处理 conf/hosts 文件
         while IFS= read -r line; do
-            # 检查是否该行内容在 /etc/hosts 中存在
-            if ! grep -q "$line" /etc/hosts; then
+            # 检查是否该行内容在 /etc/hosts 中存在(-x 全行匹配, -F 按字面量避免点号被当通配)
+            if ! grep -qxF "$line" /etc/hosts; then
                 # 不存在则追加到 /etc/hosts 后面
                 echo "$line" >> /etc/hosts
             fi
         done < "conf/hosts"
-        # 重启网络
-        restart_network
+        # /etc/hosts 修改即时生效, 无需重启网络
         log "${update_host_prompt} OK"
     else
         color_echo ${fuchsia} "conf/hosts file not found. Skipping."
@@ -64,9 +70,9 @@ function load_images {
     local -a offline_policies=("IfNotPresent" "Never")
     local load_command="online_pull_kube_base_images"  # 默认使用在线拉取
 
-    # 检查 KUBE_IMAGE_PULL_POLICY 是否在不需要在线拉取的策略中
+    # 检查 KUBE_IMAGE_PULL_POLICY 是否在不需要在线拉取的策略中(仅离线支持的系统才有离线镜像可导入)
     for policy in "${offline_policies[@]}"; do
-        if [[ "$policy" == "$KUBE_IMAGE_PULL_POLICY" ]]; then
+        if [[ "$policy" == "$KUBE_IMAGE_PULL_POLICY" && "$OFFLINE_SUPPORTED" == 1 ]]; then
             load_command="offline_load_kube_base_images"
             break
         fi
@@ -93,10 +99,14 @@ check_sys() {
         exit 1
     }
 
-    cat /etc/redhat-release | grep -i centos | grep '7.[[:digit:]]' & >/dev/null
-    if [[ $? != 0 ]]; then
-        color_echo ${red} "不支持的操作系统,该脚本只适用于CentOS 7.x  x86_64 操作系统"
+    if [[ "$OS_FAMILY" == "unsupported" ]] || { [[ "$OS_FAMILY" == "rhel" ]] && [[ "$OS_VERSION" != "7" && "$OS_VERSION" != "8" ]]; }; then
+        color_echo ${red} "不支持的操作系统(检测到 $OS_ID $OS_VERSION), 仅支持 CentOS 7(离线+在线) / CentOS 8(在线) / Debian(在线)"
         exit 1
+    fi
+    if [[ $OFFLINE_SUPPORTED == 1 ]]; then
+        log "检测到操作系统: $OS_ID $OS_VERSION($OS_FAMILY 家族, 支持离线安装)"
+    else
+        log "检测到操作系统: $OS_ID $OS_VERSION($OS_FAMILY 家族, 仅在线安装)"
     fi
     
     df_t=$(df -h | grep /$ | awk '{print $2}')
@@ -143,22 +153,14 @@ function init_master() {
     sed -i "s|{{CRI_SOCKET_SOCK_FILE}}|$CRI_SOCKET_SOCK_FILE|g" kubeadm-init.yaml
     
     cat kubeadm-init.yaml
-    log "全局修改addons-image-repository"
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_POD_SUBNET}}|'"$KUBE_POD_SUBNET"'|g' {} \;    
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{ADDONS_IMAGE_REPOSITORY}}|'"$ADDONS_IMAGE_REPOSITORY"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{GLOBAL_IMAGE_REPOSITORY}}|'"$GLOBAL_IMAGE_REPOSITORY"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{CNI_INSTALL_PATH}}|'"$CNI_INSTALL_PATH"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{CNI_NET_PATH}}|'"$CNI_NET_PATH"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_FLANNEL_CFG_MOUNTPATH}}|'"$KUBE_FLANNEL_CFG_MOUNTPATH"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_FLANNEL_RUN_MOUNTPATH}}|'"$KUBE_FLANNEL_RUN_MOUNTPATH"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{CALICO_IPV4POOL_CIDR}}|'"$CALICO_IPV4POOL_CIDR"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{CALICO_IPV4POOL_IPIP}}|'"$CALICO_IPV4POOL_IPIP"'|g' {} \;
+    # addons 占位符已由 install-addons.sh 在 apply 时渲染为副本(模板原件不被修改), 此处不再预渲染
 
     log "初始化Kube Master"
     run_command "kubeadm init --config kubeadm-init.yaml --v=5" && \
     bak_kube_config && \
     install_network_plugin && \
     poll_k8s_ready && \
+    install_ingress_plugin && \
     sub_slave_rely
 }
 
@@ -207,17 +209,29 @@ function install_network_plugin(){
     fi
 }
 
+# Ingress Controller 安装(traefik 与 ingress-nginx 二选一, 由 --traefik / --ingress-nginx 指定)
+function install_ingress_plugin(){
+    if [[ $KUBE_INGRESS_PLUGIN == "traefik" ]]; then
+        log "开始安装 traefik ingress controller version: $TRAEFIK_VERSION"
+        run_command "/bin/bash install-addons.sh traefik"
+    elif [[ $KUBE_INGRESS_PLUGIN == "ingress-nginx" ]]; then
+        log "开始安装 ingress-nginx version: $INGRESS_NGINX_VERSION"
+        run_command "/bin/bash install-addons.sh ingress-nginx $INGRESS_NGINX_VERSION"
+    fi
+}
+
 function slave_join(){
     log "配置slave节点kubernetes admin.config"
-    kube_admin_path=" $HOME/.kube/config"
-    if [ -f $kube_admin_path ]; then
-        mv $HOME/.kube/config $HOME/.kube/config.bak
+    local kube_admin_path="$HOME/.kube/config"
+    if [ -f "$kube_admin_path" ]; then
+        mv "$kube_admin_path" "$HOME/.kube/config.bak"
     else
-        mkdir -p $HOME/.kube
+        mkdir -p "$HOME/.kube"
     fi
-    cp -i ./kubernetes-admin.config $HOME/.kube/config
-    chown $(id -u):$(id -g) $HOME/.kube/config
-    [[ -z $(grep $KUBE_ADMIN_CONFIG_FILE ~/.bashrc) ]] && echo "export KUBECONFIG=$KUBE_ADMIN_CONFIG_FILE" >>$HOME/.bashrc
+    cp -i ./kubernetes-admin.config "$kube_admin_path"
+    chown $(id -u):$(id -g) "$kube_admin_path"
+    # slave 节点不存在 /etc/kubernetes/admin.conf, KUBECONFIG 指向刚安装的配置
+    grep -q "export KUBECONFIG=$kube_admin_path" ~/.bashrc || echo "export KUBECONFIG=$kube_admin_path" >>$HOME/.bashrc
 }
 
 function sub_slave_rely(){
@@ -227,8 +241,13 @@ function sub_slave_rely(){
     rm -rf $NODE_PACKAGE_PATH
     mkdir -p $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
     cp -R conf/ $NODE_PACKAGE_PATH/conf
-    # 复制指定的目录到 $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
-    cp -R $TARZAN_OFFLINE_PATH/{base-dependence,bash-completion,cni,conntrack,containerd,k8s/$KUBE_VERSION} "$NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH"
+    # 仅 CentOS 7 离线模式需要分发 RPM 依赖, 在线模式 slave 自行在线安装, 减小分发包体积
+    if [[ $OFFLINE_SUPPORTED == 1 ]]; then
+        # 复制指定的目录到 $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
+        cp -R $TARZAN_OFFLINE_PATH/{base-dependence,bash-completion,cni,conntrack,containerd,k8s/$KUBE_VERSION} "$NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH"
+    else
+        mkdir -p $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
+    fi
     # 复制所有的 .sh 文件到 $NODE_PACKAGE_PATH
     cp *.sh "$NODE_PACKAGE_PATH"
     cp -i $KUBE_ADMIN_CONFIG_FILE $NODE_PACKAGE_PATH/kubernetes-admin.config
@@ -263,6 +282,10 @@ while [[ $# -gt 0 ]]; do
         set_hostname $KUBE_NODE_NAME
         shift
         ;;
+        -y | --yes)
+        export AUTO_CONFIRM=1
+        echo "auto confirm all interactive prompts: $(color_title $green yes)"
+        ;;
         --flannel)
         echo "use $(color_title $green flannel ) network, and set this node as master"
         KUBE_NETWORK="flannel"
@@ -272,6 +295,22 @@ while [[ $# -gt 0 ]]; do
         echo "use $(color_title $green calico )  network, and set this node as master"
         KUBE_NETWORK="calico"
         IS_MASTER=1
+        ;;
+        --traefik)
+        if [[ $KUBE_INGRESS_PLUGIN == "ingress-nginx" ]]; then
+            color_echo ${red} "--traefik 与 --ingress-nginx 互斥, Ingress Controller 只能二选一"
+            exit 1
+        fi
+        echo "use $(color_title $green traefik ) ingress controller"
+        KUBE_INGRESS_PLUGIN="traefik"
+        ;;
+        --ingress-nginx)
+        if [[ $KUBE_INGRESS_PLUGIN == "traefik" ]]; then
+            color_echo ${red} "--traefik 与 --ingress-nginx 互斥, Ingress Controller 只能二选一"
+            exit 1
+        fi
+        echo "use $(color_title $green ingress-nginx ) ingress controller"
+        KUBE_INGRESS_PLUGIN="ingress-nginx"
         ;;
         --slavepath)
         NODE_PACKAGE_PATH=$2
@@ -334,8 +373,11 @@ while [[ $# -gt 0 ]]; do
         echo "   -addr, --advertise_address                  kubectl access address, default=$KUBE_ADVERTISE_ADDRESS"
         echo "   -tk, --token                                token, default=$KUBE_TOKEN"
         echo "   -hname, --hostname [hostname]               set hostname, default=$KUBE_NODE_NAME"
+        echo "   -y, --yes                                   auto confirm all interactive prompts"
         echo "   --flannel                                   use flannel network, and set this node as master"
         echo "   --calico                                    use calico network, and set this node as master"
+        echo "   --traefik                                   use traefik ingress controller (conflicts with --ingress-nginx)"
+        echo "   --ingress-nginx                             use ingress-nginx ingress controller (conflicts with --traefik)"
         echo "   --slavepath                                 slave packaged path, default=$NODE_PACKAGE_PATH"
         echo "   --image-repository                          default=$GLOBAL_IMAGE_REPOSITORY"
         echo "   --addons-image-repository                   default=$ADDONS_IMAGE_REPOSITORY"
@@ -348,9 +390,9 @@ while [[ $# -gt 0 ]]; do
         echo "   --discovery-token-ca-cert-hash              discovery token CA cert hash"
         echo "   -create-vreth|--create-virtualeth           default=false"
         echo "   -h, --help                                  find help"
-        echo "   Master: sh install-kube.sh -v v1.23.3 -addr $INTRANET_IP --flannel"
+        echo "   Master: sh install-kube.sh -y -v v1.23.3 -addr $INTRANET_IP --flannel"
         echo "   Slave:  sh install-kube.sh "
-        echo "   Slave Join:  sh install-kube.sh --join --masterip xxxx --token xxx --discovery-token-ca-cert-hash xxxx"
+        echo "   Slave Join:  sh install-kube.sh -y --join --masterip xxxx --token xxx --discovery-token-ca-cert-hash xxxx"
         echo ""
         exit 0
         shift # past argument
@@ -362,8 +404,19 @@ while [[ $# -gt 0 ]]; do
     shift # past argument or value
 done
 
+# Ingress Controller 插件仅在 master 初始化流程(--flannel/--calico)中生效
+if [[ -n "$KUBE_INGRESS_PLUGIN" && $IS_MASTER != 1 ]]; then
+    color_echo ${red} "--traefik/--ingress-nginx 需配合 --flannel/--calico 在 master 初始化时使用"
+    exit 1
+fi
+
 main() {
     check_sys
+    # join 幂等: 已在集群中的机器(master/已加入 slave 均有 kubelet.conf)直接跳过, 避免重复执行报 FileAvailable 错误
+    if [[ $KUBE_JOIN_MODE == 1 && -f /etc/kubernetes/kubelet.conf ]]; then
+        log "本机已在 Kubernetes 集群中(/etc/kubernetes/kubelet.conf 已存在), 跳过加入; 如需重新加入请先执行 clean-residue.sh 清理残留"
+        exit 0
+    fi
     upload_hosts
     install_depend
     prepare_work

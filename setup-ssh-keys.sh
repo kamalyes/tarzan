@@ -60,7 +60,7 @@ copy_ssh_key() {
     local PASSWORD=$3
     log "正在将公钥复制到 $TARGET ..."
 
-    if timeout 5 sshpass -p "$PASSWORD" ssh-copy-id -o StrictHostKeyChecking=no -p "$PORT" "$TARGET"; then
+    if timeout 30 sshpass -p "$PASSWORD" ssh-copy-id -o StrictHostKeyChecking=no -p "$PORT" "$TARGET"; then
         log "公钥成功复制到 $TARGET。"
     else
         color_echo ${red} "复制公钥到 $TARGET 失败,请检查连接和凭据。"
@@ -137,7 +137,7 @@ copy_file_to_machine() {
     fi
 
     log "正在将文件 $FILE 复制到 $USER_HOST ..."
-    if timeout 5 sshpass -p "$PASSWORD" scp -o BatchMode=yes -o ConnectTimeout=5 -P "$PORT" "$FILE" "$USER_HOST:$TARGET_PATH" ; then
+    if timeout $SSH_COPY_TIMEOUT sshpass -p "$PASSWORD" scp -o BatchMode=yes -o ConnectTimeout=5 -P "$PORT" "$FILE" "$USER_HOST:$TARGET_PATH" ; then
         log "文件 $FILE 成功复制到 $USER_HOST。"
     else
         color_echo ${red} "无法将文件 $FILE 复制到 $USER_HOST,请检查连接和凭据。"
@@ -164,7 +164,7 @@ execute_remote_command() {
     debug_info "$USER" "$HOST" "$PASSWORD" "$PORT"
     
     # 使用 sshpass 执行远程命令
-    if timeout 5 sshpass -p "$PASSWORD" ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$PORT" "$USER_HOST" "$COMMAND"; then
+    if timeout $SSH_EXEC_TIMEOUT sshpass -p "$PASSWORD" ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$PORT" "$USER_HOST" "$COMMAND"; then
         log "命令 '$COMMAND' 在 $USER_HOST 执行成功。"
     else
         color_echo ${red} "无法在 $USER_HOST 执行命令 '$COMMAND'，请检查连接和凭据。"

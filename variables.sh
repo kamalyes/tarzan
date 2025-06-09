@@ -82,10 +82,8 @@ SSH_PATH="~/.ssh"  # SSH 配置路径
 SSH_PRIVATE_RAS_FILE="$SSH_PATH/id_rsa"  # SSH 私钥文件路径
 SSH_PUBLIC_RAS_FILE="$SSH_PATH/id_rsa.pub"  # SSH 公钥文件路径
 SSH_MAX_PORT=65535
-KUBE_DASHBOARD_TLS_PATH="$TARZAN_ADDONS_PATH/kube-dashboard"
-KUBE_DASHBOARD_TLS_CSR_FILE="$KUBE_DASHBOARD_TLS_PATH/tls.csr"
-KUBE_DASHBOARD_TLS_CRT_FILE="$KUBE_DASHBOARD_TLS_PATH/tls.crt"
-KUBE_DASHBOARD_TLS_KEY_FILE="$KUBE_DASHBOARD_TLS_PATH/tls.key"
+SSH_COPY_TIMEOUT=600  # ssh 远程分发文件超时(秒), 大文件需要长超时
+SSH_EXEC_TIMEOUT=3600  # ssh 远程执行命令超时(秒), 安装类命令需要长超时
 
 # -------------------
 # 初始化系统配置
@@ -94,6 +92,7 @@ PERMISSION=755  # 权限设置
 DEFAULT_SSH_PORT=22 # 默认端口
 DEFAULT_SSH_PASSWORD="you_ssh_password" # 默认SSH密码
 DEFAULT_SSH_TARGET_PATH="~/"
+AUTO_CONFIRM="${AUTO_CONFIRM:-0}"  # 全局自动确认交互提示(-y 传入); 取环境变量以便父脚本传递给子脚本
 IS_MASTER=0  # 是否为主节点，0 表示否
 KUBE_VERSION="1.23.3"  # Kubernetes 版本
 ONLY_INSTALL_DEPEND="false"  # 是否仅安装依赖
@@ -134,14 +133,92 @@ DASHBOARD_VERSION="2.5.1"  # Kubernetes Dashboard 版本
 INGRESS_NGINX_VERSION="1.6.3"  # Ingress NGINX 版本
 METRICS_VERSION="0.6.4"  # Metrics Server 版本
 STATE_METRICS_STANDARD_VERSION="2.10.0"  # State Metrics Standard 版本
+DESCHEDULER_VERSION="0.24.0"  # Descheduler 版本
 CNI_PLUGINS_VERSION="v1.5.1"  # CNI 插件版本
+
+# 业务扩展版本信息(addons), 大清单按集群实际版本自动隔离(1.23 集群用 *_LEGACY_VERSION 兼容版, 1.28+ 集群用新版)
+TRAEFIK_VERSION="3.1.2"  # Traefik 版本(CRD 与部署模板双档共用)
+CERT_MANAGER_LEGACY_VERSION="1.13.3"  # Cert Manager 兼容版(k8s 1.23)
+CERT_MANAGER_VERSION="1.21.0"  # Cert Manager 版本(k8s 1.28+)
+LONGHORN_LEGACY_VERSION="1.6.3"  # Longhorn 兼容版(k8s 1.23)
+LONGHORN_VERSION="1.12.0"  # Longhorn 版本(k8s 1.28+)
+OPENOBSERVE_VERSION="v0.10.5"  # OpenObserve 版本
+OTEL_OPERATOR_LEGACY_VERSION="0.96.0"  # OpenTelemetry Operator 兼容版(k8s 1.23)
+OTEL_OPERATOR_VERSION="0.156.0"  # OpenTelemetry Operator 版本(k8s 1.28+)
+OTEL_COLLECTOR_VERSION="0.96.0"  # OpenTelemetry Collector Contrib 版本
+
+# 业务组件版本信息(components)
+CLICKHOUSE_VERSION="23.8.8.24"  # ClickHouse 版本
+COCKROACHDB_VERSION="v23.1.28"  # CockroachDB 版本
+NATS_VERSION="2.10.11"  # NATS 版本
+VALKEY_VERSION="7.2.5"  # Valkey 版本
+
+# 业务镜像清单(默认官方源, 需私有仓库时改写为 <registry>/<name>:<version> 即可)
+CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:${CLICKHOUSE_VERSION}"
+COCKROACHDB_IMAGE="cockroach/cockroach:${COCKROACHDB_VERSION}"
+NATS_IMAGE="nats:${NATS_VERSION}"
+VALKEY_IMAGE="valkey/valkey:${VALKEY_VERSION}"
+TRAEFIK_IMAGE="traefik:v${TRAEFIK_VERSION}"
+OPENOBSERVE_IMAGE="public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION}"
+OTEL_COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION}"
+
+# 业务组件安装信息(components 由 install-components.sh 动态生成, 不维护静态yaml)
+TARZAN_COMPONENTS_PATH="components"  # 业务组件清单动态生成路径
+COMPONENT_NAMESPACE="component"  # 业务组件命名空间
+COMPONENT_SECRETS="component-secrets"  # 业务组件密钥名称
+MONITORING_NAMESPACE="monitoring"  # 监控组件命名空间
+MONITORING_SECRETS="monitoring-secrets"  # 监控组件密钥名称
+LONGHORN_STORAGE_CLASS="longhorn"  # Longhorn 默认 StorageClass 名称(v1.6.x)
+COMPONENT_SECRETS_TEMPLATE_FILE="conf/components.env.template"  # 业务组件密钥模板
+COMPONENT_SECRETS_ENV_FILE="conf/components.env"  # 业务组件密钥(运行时生成)
+
+# Ingress Controller 选择(traefik 与 ingress-nginx 二选一, 传参 --traefik / --ingress-nginx)
+KUBE_INGRESS_PLUGIN=""
+TRAEFIK_DEPLOY_MODE="deployment"  # Traefik 部署形态: deployment(control-plane) / daemonset(每节点)
+TRAEFIK_ACME_EMAIL="example@example.com"  # Traefik ACME 证书申请邮箱, 请替换为实际值
+
+# OTel 采集部署命名空间与排除的日志命名空间(避免采集管理面日志)
+OTEL_BUSINESS_NAMESPACE="business"
+OTEL_OPENAPI_NAMESPACE="openapi"
+OTEL_EXCLUDE_LOG_NAMESPACE_1="kube-system"
+OTEL_EXCLUDE_LOG_NAMESPACE_2="monitoring"
+
+# 业务组件副本数(routes/join 列表据此动态计算, 改副本数无需改生成逻辑)
+CLICKHOUSE_REPLICAS=1
+COCKROACHDB_REPLICAS=3
+NATS_REPLICAS=3
+VALKEY_REPLICAS=2
+VALKEY_CLUSTER_REPLICAS=6
+
+# CockroachDB 证书信息(节点证书 SAN 追加的外部域名与公网 IP, 请替换为实际值)
+COCKROACHDB_EXTERNAL_DOMAIN="cockroach.example.com"
+COCKROACHDB_PUBLIC_IP="192.0.2.10"
+COCKROACHDB_CERTS_PATH="conf/cockroachdb-certs"
 
 IMAGE_FILE_PATH="$TARZAN_OFFLINE_PATH/images/images.lock"  # 镜像文件路径
 
 # -------------------
 # 系统信息
 # -------------------
-CENTOS_VERSION=$(grep VERSION_ID /etc/os-release | cut -d '=' -f 2 | tr -d '"')  # 获取 CentOS 版本
+# 发行版识别: CentOS 7 支持离线+在线安装, CentOS 8 / Debian 仅在线安装
+OS_ID=$(grep '^ID=' /etc/os-release | cut -d '=' -f 2 | tr -d '"')
+OS_VERSION=$(grep '^VERSION_ID=' /etc/os-release | cut -d '=' -f 2 | tr -d '"' | cut -d '.' -f 1)
+case "$OS_ID" in
+  centos|rhel|rocky|almalinux)
+    OS_FAMILY="rhel" ;;
+  debian|ubuntu)
+    OS_FAMILY="debian" ;;
+  *)
+    OS_FAMILY="unsupported" ;;
+esac
+
+# 离线包按 el7 RPM 组织, 仅 CentOS 7 支持离线安装
+OFFLINE_SUPPORTED=0
+if [[ "$OS_FAMILY" == "rhel" && "$OS_VERSION" == "7" ]]; then
+  OFFLINE_SUPPORTED=1
+fi
+
+CENTOS_VERSION=7  # CentOS 7 离线包(el7)专用版本号
 ARCHITECTURE=$(uname -m)  # 获取系统架构
 KERNEL_VERSION=$(uname -r)  # 获取内核版本
 # 提取主版本号和次版本号
@@ -216,14 +293,26 @@ VM_MAX_MAP_COUNT=$((TOTAL_MEMORY / 64))  # 设置为总内存的 1/64
 DISABLE_IPV6=1
 
 # -------------------
-# 动态生成 RPM 基础 URL
+# 软件源端点(云厂商自适应: 阿里云/腾讯云走内网镜像, AWS 走官方源, 由 ensure_cloud_mirrors() 按需覆盖)
 # -------------------
-if (( $(echo "$CENTOS_VERSION > 7" | bc -l) )); then
-    echo "centos系统版本>7, centos_version=$CENTOS_VERSION, kernel_version=$KERNEL_VERSION, major_kernel_version=$MAJOR_KERNEL_VERSION, minor_kernel_version=$MINOR_KERNEL_VERSION, 降级使用7"
-    CENTOS_VERSION=7  # 如果不是7，降级使用7
-fi
+CLOUD_PROVIDER="other"  # 云厂商: other/aliyun/tencent/aws, 由 detect_cloud_provider() 探测
+MIRROR_ROOT="https://mirrors.aliyun.com"  # 镜像根(阿里云/腾讯云内网域名同构, 可整体切换)
 
-RPM_BASE_URL="http://mirrors.aliyun.com/centos/${CENTOS_VERSION}/os/${ARCHITECTURE}/Packages/"  # RPM 基础 URL
-RPM_DOCKER_URL="https://mirrors.aliyun.com/docker-ce/linux/centos/${CENTOS_VERSION}/${ARCHITECTURE}/stable/Packages/"  # Docker RPM URL
-RPM_KUBERNETES_URL="https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-${ARCHITECTURE}/Packages/"  # Kubernetes RPM URL
+# -------------------
+# RPM 基础 URL(仅 CentOS 7 离线下载使用)
+# -------------------
+RPM_BASE_URL="${MIRROR_ROOT}/centos/${CENTOS_VERSION}/os/${ARCHITECTURE}/Packages/"  # RPM 基础 URL
+RPM_DOCKER_URL="${MIRROR_ROOT}/docker-ce/linux/centos/${CENTOS_VERSION}/${ARCHITECTURE}/stable/Packages/"  # Docker RPM URL
+RPM_KUBERNETES_URL="${MIRROR_ROOT}/kubernetes/yum/repos/kubernetes-el7-${ARCHITECTURE}/Packages/"  # Kubernetes RPM URL
 GITHUB_CONTAINERNETWORKING_URL="https://github.com/containernetworking/plugins/releases/download"  # Container Networking GitHub URL
+
+# -------------------
+# 在线安装源(CentOS 8 已 EOL 走归档源, Debian 走镜像)
+# -------------------
+CENTOS8_VAULT_BASE="${MIRROR_ROOT}/centos-vault/8.5.2111"  # CentOS 8 归档源
+EPEL8_ARCHIVE_URL="${MIRROR_ROOT}/epel-archive/epel/8/Everything/${ARCHITECTURE}"  # EPEL 8 归档源(sshpass)
+DOCKER_CE_YUM_BASE="${MIRROR_ROOT}/docker-ce/linux/centos"  # Docker CE YUM 源(el7/el8)
+DOCKER_CE_APT_BASE="${MIRROR_ROOT}/docker-ce/linux/debian"  # Docker CE APT 源
+KUBERNETES_YUM_BASE="${MIRROR_ROOT}/kubernetes/yum"  # Kubernetes YUM 源(el7/el8)
+KUBERNETES_APT_BASE="${MIRROR_ROOT}/kubernetes/apt"  # Kubernetes APT 源
+KUBERNETES_YUM_REPO_URL="${KUBERNETES_YUM_BASE}/repos/kubernetes-el${OS_VERSION}-${ARCHITECTURE}"  # Kubernetes YUM repo 完整 URL

@@ -15,28 +15,30 @@ server ntp5.aliyun.com iburst
 server ntp6.aliyun.com iburst
 server ntp7.aliyun.com iburst
 EOF
-  run_command "systemctl restart chronyd.service"
+  run_command "systemctl restart chronyd.service || systemctl restart chrony.service"
   run_command "chronyc sources -v"
 }
 
 function update_kubernetes_conf() {
   log "配置Kubernetes镜像源 $KUBERNETES_YUM_REPO_CONF"
 
-  # 创建Kubernetes YUM仓库配置文件
-  if ! grep -q "\[kubernetes\]" "$KUBERNETES_YUM_REPO_CONF"; then
-    cat <<EOF >"$KUBERNETES_YUM_REPO_CONF"
+  # yum 仓库仅适用 rhel 家族(el7/el8), Debian 的 apt 源由 yum-packages.sh config_online_repos 管理
+  if [[ "$OS_FAMILY" == "rhel" ]]; then
+    # 创建Kubernetes YUM仓库配置文件
+    if ! grep -q "\[kubernetes\]" "$KUBERNETES_YUM_REPO_CONF"; then
+      cat <<EOF >"$KUBERNETES_YUM_REPO_CONF"
 [kubernetes]
 name=Kubernetes
-baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64
+baseurl=${KUBERNETES_YUM_REPO_URL}
 enabled=1
-gpgcheck=1
-repo_gpgcheck=0
-gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
-      https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
+gpgcheck=0
 EOF
-    log "Kubernetes YUM 仓库配置写入成功"
+      log "Kubernetes YUM 仓库配置写入成功"
+    else
+      log "Kubernetes YUM 仓库配置已存在,跳过写入"
+    fi
   else
-    log "Kubernetes YUM 仓库配置已存在,跳过写入"
+    log "非 rhel 家族,跳过 Kubernetes YUM 仓库配置"
   fi
   
   run_command "mkdir -p $SYSCTLD_PATH"
@@ -146,16 +148,22 @@ EOF
 
 function rest_firewalld() {
   log "关闭防火墙"
-  run_command "systemctl stop firewalld"
-  run_command "systemctl disable firewalld"
+  # firewalld 不存在的系统(如 Debian)跳过, iptables 规则清空对两个家族通用
+  if systemctl list-unit-files 2>/dev/null | grep -q "^firewalld"; then
+    run_command "systemctl stop firewalld"
+    run_command "systemctl disable firewalld || true"
+    run_command "systemctl status firewalld || true"
+  else
+    log "未检测到 firewalld 服务,跳过关闭"
+  fi
 
-  log "关闭iptables"
-  run_command "systemctl stop iptables"
-  run_command "systemctl disable iptables"
-  
-  log "检查防火墙和iptables状态"
-  run_command "systemctl status firewalld"
-  run_command "systemctl status iptables"
+  if systemctl list-unit-files 2>/dev/null | grep -q "^iptables\.service"; then
+    run_command "systemctl stop iptables"
+    run_command "systemctl disable iptables || true"
+    run_command "systemctl status iptables || true"
+  else
+    log "未检测到 iptables 服务,跳过关闭"
+  fi
 
   log "清空iptables规则"
   run_command "iptables -F"
@@ -177,11 +185,16 @@ function disable_swapoff() {
 }
 
 function disabled_selinux() {
+  # 无 SELinux 的系统(如 Debian)直接跳过
+  if [ ! -f "$SELINUX_CONF_PATH" ] && ! command -v setenforce >/dev/null 2>&1; then
+    log "系统未启用 SELinux,跳过关闭"
+    return 0
+  fi
   log "关闭selinux"
-  
-  # 临时关闭
-  run_command "setenforce 0"
-  
+
+  # 临时关闭(SELinux 已禁用时 setenforce 报错属正常, 不阻塞安装)
+  run_command "setenforce 0 2>/dev/null || true"
+
   # 永久禁用
   run_command "sed -i '/SELINUX/s/enforcing/disabled/g' $SELINUX_CONF_PATH"
   run_command "sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' $SELINUX_CONF_PATH"
@@ -514,12 +527,20 @@ EOF
 
 function check() {
   log "检查配置是否生效,如果都正确,表示主机环境初始化均成功"
-  
-  # 检查防火墙状态
-  run_command "systemctl status firewalld"
-  
-  # 检查 SELinux 状态
-  run_command "getenforce"
+
+  # 检查防火墙状态(firewalld 不存在的系统跳过; 已停止的服务 status 返回非 0 属正常)
+  if systemctl list-unit-files 2>/dev/null | grep -q "^firewalld"; then
+    run_command "systemctl status firewalld || true"
+  else
+    log "未检测到 firewalld 服务,跳过状态检查"
+  fi
+
+  # 检查 SELinux 状态(无 SELinux 的系统跳过)
+  if command -v getenforce >/dev/null 2>&1; then
+    run_command "getenforce"
+  else
+    log "系统未启用 SELinux,跳过状态检查"
+  fi
   
   # 查看内存使用情况
   run_command "free -m"

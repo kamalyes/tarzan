@@ -44,7 +44,10 @@ function del_flannel() {
         ip link set dev cni0 up
         ifconfig cni0 $KUBE_POD_SUBNET
         ifconfig cni0 mtu 1450 up
-        cd /etc/sysconfig/network-scripts/ # 若不生效也可以进入改目录下直接删除配置文件后重启网络
+        # 若不生效也可以进入该目录下直接删除配置文件后重启网络(Debian 无此目录, 跳过)
+        if [[ -d /etc/sysconfig/network-scripts ]]; then
+            cd /etc/sysconfig/network-scripts/
+        fi
         log "${del_flannel_prompt} OK"
     fi
 }
@@ -52,16 +55,26 @@ function del_flannel() {
 function delete_dkube() {
     delete_dkube_prompt="卸载k8s&Docker等相关程序"
     if prompt_for_confirmation "$which_prompt" "$delete_dkube_prompt"; then
-        yum -y remove kube*
-        yum -y remove docker*
-        yum -y install lsof
+        # 按发行版选择包管理器(rhel 家族 yum / debian 家族 apt-get)
+        if [[ "$OS_FAMILY" == "debian" ]]; then
+            apt-get purge -y 'kube*' 'docker*' containerd.io
+            apt-get install -y lsof
+        else
+            yum -y remove kube*
+            yum -y remove docker*
+            yum -y install lsof
+        fi
         lsof -i :6443 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         lsof -i :10251 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         lsof -i :10252 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         lsof -i :10250 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         lsof -i :2379 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         lsof -i :2380 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
-        yum clean all && yum makecache
+        if [[ "$OS_FAMILY" == "debian" ]]; then
+            apt-get autoremove -y && apt-get clean
+        else
+            yum clean all && yum makecache
+        fi
         log "${delete_dkube_prompt} OK"
     fi
 }

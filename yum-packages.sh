@@ -113,6 +113,7 @@ function offline_install_dockercompose() {
 
 
 function online_download_dependency() {
+  ensure_cloud_mirrors
   # 创建 offline 目录结构
   directories=(
       "base-dependence"
@@ -200,6 +201,123 @@ function online_download_dependency() {
   log "所有包已下载完成！"
 }
 
+# -------------------
+# 在线安装(CentOS 8 / Debian 专用, CentOS 7 默认走离线流程)
+# -------------------
+
+# 统一在线包安装入口: rhel 家族走 dnf, debian 家族走 apt-get
+function pkg_online_install() {
+  if [[ "$OS_FAMILY" == "debian" ]]; then
+    run_command "apt-get install -y $*"
+  else
+    run_command "dnf install -y $*"
+  fi
+}
+
+# 配置在线软件源(CentOS 8: vault 归档 + epel-archive + docker-ce + kubernetes el8; Debian: docker-ce + kubernetes apt)
+function config_online_repos() {
+  ensure_cloud_mirrors
+  if [[ "$OS_FAMILY" == "debian" ]]; then
+    log "配置 Debian 在线软件源(镜像根: $MIRROR_ROOT)"
+    local codename
+    codename=$(grep '^VERSION_CODENAME=' /etc/os-release | cut -d '=' -f 2 | tr -d '"')
+    cat <<EOF > /etc/apt/sources.list.d/kubernetes.list
+deb [trusted=yes] ${KUBERNETES_APT_BASE}/ kubernetes-xenial main
+EOF
+    cat <<EOF > /etc/apt/sources.list.d/docker-ce.list
+deb [trusted=yes] ${DOCKER_CE_APT_BASE}/ ${codename} stable
+EOF
+    run_command "apt-get update"
+  else
+    log "配置 CentOS 8 在线软件源(系统已 EOL, 切换阿里云 vault 归档源)"
+    mkdir -p /etc/yum.repos.d/bak
+    mv -f /etc/yum.repos.d/CentOS-*.repo /etc/yum.repos.d/bak/ 2>/dev/null || true
+    cat <<EOF > /etc/yum.repos.d/CentOS-Vault.repo
+[BaseOS]
+name=CentOS-8.5.2111 - BaseOS
+baseurl=${CENTOS8_VAULT_BASE}/BaseOS/${ARCHITECTURE}/os/
+gpgcheck=0
+
+[AppStream]
+name=CentOS-8.5.2111 - AppStream
+baseurl=${CENTOS8_VAULT_BASE}/AppStream/${ARCHITECTURE}/os/
+gpgcheck=0
+EOF
+    cat <<EOF > /etc/yum.repos.d/epel-archive.repo
+[epel-archive]
+name=CentOS-8 EPEL Archive
+baseurl=${EPEL8_ARCHIVE_URL}
+gpgcheck=0
+EOF
+    cat <<EOF > /etc/yum.repos.d/docker-ce.repo
+[docker-ce-stable]
+name=Docker CE Stable
+baseurl=${DOCKER_CE_YUM_BASE}/8/${ARCHITECTURE}/stable
+gpgcheck=0
+EOF
+    cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=${KUBERNETES_YUM_BASE}/repos/kubernetes-el8-${ARCHITECTURE}
+gpgcheck=0
+EOF
+    run_command "dnf clean all"
+    run_command "dnf makecache"
+  fi
+}
+
+# 在线安装基础依赖(含 sshpass / chrony / conntrack / socat 等, 包名按家族对照)
+function online_install_base() {
+  log "在线安装基础依赖"
+  if [[ "$OS_FAMILY" == "debian" ]]; then
+    pkg_online_install ipset ipvsadm conntrack socat chrony sshpass wget tree curl jq vim net-tools unzip telnet iputils-ping bash-completion iptables
+  else
+    pkg_online_install ipset ipvsadm conntrack-tools socat chrony sshpass wget tree curl jq vim net-tools unzip telnet iputils bash-completion iptables-nft
+  fi
+}
+
+# 在线安装 containerd 与 cri-tools
+function online_install_containerd() {
+  log "在线安装 containerd 与 cri-tools"
+  pkg_online_install containerd.io cri-tools
+  enable_service containerd
+}
+
+# 在线安装 docker 与 compose 插件(仅 master)
+function online_install_docker() {
+  log "在线安装 docker 与 docker-compose 插件"
+  pkg_online_install docker-ce docker-ce-cli docker-compose-plugin
+  enable_service docker
+}
+
+# 在线安装 kubelet kubeadm kubectl(锁版本)
+function online_install_kube() {
+  log "在线安装 kubelet kubeadm kubectl, 版本 $KUBE_VERSION"
+  if [[ "$OS_FAMILY" == "debian" ]]; then
+    run_command "apt-get install -y kubelet=$KUBE_VERSION-00 kubeadm=$KUBE_VERSION-00 kubectl=$KUBE_VERSION-00"
+  else
+    run_command "dnf install -y --disableexcludes=kubernetes kubelet-$KUBE_VERSION kubeadm-$KUBE_VERSION kubectl-$KUBE_VERSION"
+  fi
+  log "写入 kubectl 命令补全"
+  kubectl completion bash | run_command "tee /etc/bash_completion.d/kubectl"
+  enable_service kubelet
+}
+
+function online_install_dependency() {
+  log "当前系统 $OS_ID $OS_VERSION($OS_FAMILY 家族)在线安装, K8s 版本 $KUBE_VERSION, 是否 master: $IS_MASTER"
+  config_online_repos
+  online_install_base
+  online_install_containerd
+  # CNI 插件为通用 tgz, 在线下载后复用离线解压逻辑
+  download_packages cni "$GITHUB_CONTAINERNETWORKING_URL" "/v$CNI_PLUGINS_VERSION/cni-plugins-linux-amd64-$CNI_PLUGINS_VERSION.tgz"
+  offline_install_cni_plugins
+  if [[ $IS_MASTER == 1 ]]; then
+    online_install_docker
+  fi
+  online_install_kube
+  log "在线安装依赖完成"
+}
+
 function offline_install_public_dependency() {
   offline_install_dependent
   log "Dependent installed successfully."
@@ -248,6 +366,13 @@ function main_entrance() {
     log "Online download rpm depend packages k8s version $KUBE_VERSION"
     log "Online download rpm depend packages is k8s master $IS_MASTER"
     online_download_dependency
+    ;;
+  online_install_dependency)
+    KUBE_VERSION=$2
+    IS_MASTER=$3
+    log "Online install depend packages k8s version $KUBE_VERSION"
+    log "Online install depend packages is k8s master $IS_MASTER"
+    online_install_dependency
     ;;
   offline_install_cni_plugins)
     offline_install_cni_plugins
