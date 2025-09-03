@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: ingress
+  labels:
+    app.kubernetes.io/name: traefik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: traefik
+    spec:
+      serviceAccountName: traefik
+      # 兼容 1.23(master 标签/污点)与 1.24+(control-plane), 两个 nodeSelectorTerms 为 OR 关系
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/master
+                    operator: Exists
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+      hostNetwork: true
+      volumes:
+        - name: acme
+          persistentVolumeClaim:
+            claimName: traefik-acme-pvc
+      containers:
+        - name: traefik
+          image: {{TRAEFIK_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          args:
+            - --api=false
+            - --ping=true
+            - --entryPoints.traefik.address=:8080
+            - --entryPoints.web.address=:80
+            - --entryPoints.websecure.address=:443
+            - --providers.kubernetesCRD
+            - --providers.kubernetesIngress
+            - --certificatesresolvers.leresolver.acme.email={{TRAEFIK_ACME_EMAIL}}
+            - --certificatesresolvers.leresolver.acme.storage=/data/acme.json
+            - --certificatesresolvers.leresolver.acme.httpchallenge.entrypoint=web
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+            - name: traefik
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: traefik
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: acme
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: traefik-acme-pvc
+  namespace: ingress
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{LONGHORN_STORAGE_CLASS}}
+  resources:
+    requests:
+      storage: 1Gi

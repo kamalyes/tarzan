@@ -55,9 +55,6 @@ metadata:
   name: kubernetes-dashboard-certs
   namespace: kube-dashboard
 type: Opaque
-data:
-  tls.crt: {{KUBE_DASHBOARD_BASE64_ENCODED_CERT}}
-  tls.key: {{KUBE_DASHBOARD_BASE64_ENCODED_KEY}}
 
 ---
 

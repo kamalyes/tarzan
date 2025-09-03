@@ -1,116 +1,155 @@
 #!/usr/bin/env bash
 source ./common.sh
 
-action=$1
+# addons 安装器: 只保留各组件的业务编排
+# 渲染副本/占位符替换/镜像预拉取/应用等通用机制统一在 common.sh 的 install_rendered
 
-function check_pod_status() {
-    component=$1
-    while true; do
-        if kubectl get pods -n "$component" | grep -q '0/1'; then
-            log "安装${component}进行中..."
-        else
-            log "${component}安装完成"
-            break
-        fi
-        sleep 1
-    done
-}
+action=$1
 
 function taint() {
     KUBE_NODE_NAME=${1:-$KUBE_NODE_NAME}
     taint_prompt="去掉Master污点"
-    read -p "是否确认${taint_prompt}? [n/y] " __choice </dev/tty
-    case "$__choice" in
-        y | Y)
-            run_command "kubectl taint nodes $KUBE_NODE_NAME node-role.kubernetes.io/master:NoSchedule- 2>/dev/null"
-            run_command "kubectl taint nodes $KUBE_NODE_NAME node.kubernetes.io/not-ready:NoSchedule- 2>/dev/null"
-            ;;
-        n | N | *)
-            color_echo ${yellow} "跳过${taint_prompt}..."
-            ;;
-    esac
+    if prompt_for_confirmation "" "$taint_prompt"; then
+        # 幂等去除污点(污点不存在时 kubectl 报错属正常, 不阻塞)
+        run_command "kubectl taint nodes $KUBE_NODE_NAME node-role.kubernetes.io/master:NoSchedule- 2>/dev/null || true"
+        run_command "kubectl taint nodes $KUBE_NODE_NAME node.kubernetes.io/not-ready:NoSchedule- 2>/dev/null || true"
+    else
+        color_echo ${yellow} "跳过${taint_prompt}..."
+    fi
 }
 
+# addons 组件薄封装: install_rendered 通用机制 + 命名空间资源展示与就绪检测
 function install_component() {
     local component_name=$1
     local version=$2
     local yaml_file=$3
-
-    log "开始安装组件 ${component_name}-v${version}"
-    run_command "kubectl apply -f ${yaml_file}"
-    kubectl get all -n "$component_name"
-    check_pod_status "$component_name"
+    # 第4参数为清单实际所在命名空间(缺省以组件名推断, 如 metrics/descheduler 在 kube-system)
+    local namespace=${4:-$component_name}
+    install_rendered "${component_name}-v${version}" \
+        "$TARZAN_ADDONS_PATH/.rendered-${component_name}.yaml" "$yaml_file"
+    kubectl get all -n "$namespace"
+    check_pod_status "$namespace"
 }
 
 function dashboard() {
     local DASHBOARD_VERSION=$1
     log "开始安装k8s-web组件 Dashboard-v$DASHBOARD_VERSION"
-    result=$(generate_self_signed_cert "$KUBE_DASHBOARD_TLS_KEY_FILE" "$KUBE_DASHBOARD_TLS_CSR_FILE" "$KUBE_DASHBOARD_TLS_CRT_FILE" "$COMMON_NAME")
-    # 将结果分割为证书和私钥
-    IFS=' ' read -r base64_encoded_cert base64_encoded_key <<< "$result"
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_DASHBOARD_BASE64_ENCODED_CERT}}|'"$base64_encoded_cert"'|g' {} \;
-    find addons -name "*.yaml" -exec sed -i.bak 's|{{KUBE_DASHBOARD_BASE64_ENCODED_KEY}}|'"$base64_encoded_key"'|g' {} \;
-
     install_component "kube-dashboard" "$DASHBOARD_VERSION" "addons/kube-dashboard/$DASHBOARD_VERSION"
 
-    kubectl create serviceaccount dashboard-admin -n kube-dashboard
-    kubectl create clusterrolebinding dashboard-admin-rb --clusterrole=cluster-admin --serviceaccount=kube-dashboard:dashboard-admin
-    
+    # 幂等创建登录凭据(重复执行不报 AlreadyExists)
+    run_command "kubectl create serviceaccount dashboard-admin -n kube-dashboard --dry-run=client -o yaml | kubectl apply -f -"
+    run_command "kubectl create clusterrolebinding dashboard-admin-rb --clusterrole=cluster-admin --serviceaccount=kube-dashboard:dashboard-admin --dry-run=client -o yaml | kubectl apply -f -"
+
     local ADMIN_SECRET=$(kubectl get secrets -n kube-dashboard | grep dashboard-admin | awk '{print $1}')
     kubectl -n kube-dashboard describe secret "$ADMIN_SECRET"
     local DASHBOARD_LOGIN_TOKEN=$(kubectl describe secret -n kube-dashboard "${ADMIN_SECRET}" | grep -E '^token' | awk '{print $2}')
     echo "${DASHBOARD_LOGIN_TOKEN}" > kubernetes-dashboard-token.txt
-    log "登录token见 安装目录下token.txt"
+    log "登录token见 安装目录下kubernetes-dashboard-token.txt"
+}
+
+function cert_manager() {
+    # 清单已入仓: 1.23 集群用兼容版, 1.28+ 集群用新版(环境前缀将档位版本传入占位符替换)
+    local version
+    version=$(legacy_or_modern "$CERT_MANAGER_LEGACY_VERSION" "$CERT_MANAGER_VERSION")
+    CERT_MANAGER_VERSION="$version" install_rendered "cert-manager-v${version}" \
+        "$TARZAN_ADDONS_PATH/.rendered-cert-manager.yaml" \
+        "$TARZAN_ADDONS_PATH/kube-cert-manager/$version/cert-manager.yaml"
+    kubectl get all -n cert-manager
+    check_pod_status cert-manager
+}
+
+function traefik() {
+    check_ingress_exclusive traefik nginx
+    local dir="$TARZAN_ADDONS_PATH/kube-traefik"
+    # CRD 清单已入仓(traefik 3.x 对 1.23/1.28 双档共用一份), 先注册 CRD 再装主体
+    run_command "kubectl apply -f $dir/crd-definition-v1.yml"
+    # 基础清单按部署形态(deployment/daemonset)渲染
+    install_rendered "traefik-${TRAEFIK_DEPLOY_MODE}" "$TARZAN_ADDONS_PATH/.rendered-traefik.yaml" \
+        "$dir/namespace.yaml" "$dir/rbac.yaml" "$dir/$TRAEFIK_DEPLOY_MODE.yaml" "$dir/service.yaml" "$dir/ingressclass.yaml"
+    # deployment 形态的 acme PVC 依赖存储类
+    if [[ $TRAEFIK_DEPLOY_MODE == "deployment" ]]; then
+        check_storage_class
+    fi
+    kubectl get all -n ingress
+}
+
+function openobserve() {
+    if ! kubectl get secret "$MONITORING_SECRETS" -n "$MONITORING_NAMESPACE" &>/dev/null; then
+        color_echo ${red} "请先执行 install-components.sh secrets 生成监控密钥"
+        exit 1
+    fi
+    local dir="$TARZAN_ADDONS_PATH/kube-openobserve"
+    install_rendered "openobserve" "$TARZAN_ADDONS_PATH/.rendered-openobserve.yaml" \
+        "$dir"/namespace.yaml "$dir"/statefulset.yaml "$dir"/service.yaml "$dir"/service-nodeport.yaml
+    # 数据卷依赖存储类
+    check_storage_class
+    kubectl get all -n monitoring
+}
+
+function otel() {
+    local dir="$TARZAN_ADDONS_PATH/kube-otel"
+    # operator 清单已入仓: 1.23 集群用兼容版, 1.28+ 集群用新版(环境前缀将档位版本传入占位符替换)
+    local version
+    version=$(legacy_or_modern "$OTEL_OPERATOR_LEGACY_VERSION" "$OTEL_OPERATOR_VERSION")
+    OTEL_OPERATOR_VERSION="$version" install_rendered "otel-operator-v${version}" \
+        "$TARZAN_ADDONS_PATH/.rendered-otel-operator.yaml" \
+        "$dir/$version/opentelemetry-operator.yaml"
+    # 等待 operator 的 CRD 在 API Server 完成注册
+    until kubectl get crd opentelemetrycollectors.opentelemetry.io &>/dev/null; do
+        log "等待 opentelemetrycollectors CRD 注册..."
+        sleep 2
+    done
+    # 采集器所在命名空间先行
+    run_command "kubectl create namespace $OTEL_BUSINESS_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -"
+    run_command "kubectl create namespace $OTEL_OPENAPI_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -"
+    local collector
+    for collector in business-otel.yml openapi-otel.yml; do
+        install_rendered "otel-collector-${collector%.yml}" \
+            "$TARZAN_ADDONS_PATH/.rendered-$collector" "$dir/$collector"
+    done
+}
+
+function longhorn() {
+    local dir="$TARZAN_ADDONS_PATH/kube-longhorn"
+    # install 清单已入仓: 1.23 集群用兼容版, 1.28+ 集群用新版; settings 覆盖默认副本数
+    local version
+    version=$(legacy_or_modern "$LONGHORN_LEGACY_VERSION" "$LONGHORN_VERSION")
+    LONGHORN_VERSION="$version" install_rendered "longhorn-v${version}" \
+        "$TARZAN_ADDONS_PATH/.rendered-longhorn.yaml" \
+        "$dir/$version/install.yaml" "$dir/settings.yaml"
+    kubectl get all -n longhorn-system
+    check_pod_status longhorn-system
 }
 
 function main_entrance() {
     case "${action}" in
         flannel)
-            FLANNEL_VERSION=$2
-            if [ -z "$FLANNEL_VERSION" ]; then
-                log "请提供 flannel 版本号"
-                exit 1
-            fi
-            log "准备安装 flannel 版本 $FLANNEL_VERSION"
+            # 版本缺省取 variables.sh 默认值
+            FLANNEL_VERSION=${2:-$FLANNEL_VERSION}
             install_component "kube-flannel" "$FLANNEL_VERSION" "addons/kube-flannel/${FLANNEL_VERSION}/flannel-init.yaml"
             ;;
         calico)
-            CALICO_VERSION=$2
-            if [ -z "$CALICO_VERSION" ]; then
-                log "请提供 calico 版本号"
-                exit 1
-            fi
-            log "准备安装 calico 版本 $CALICO_VERSION"
+            CALICO_VERSION=${2:-$CALICO_VERSION}
             install_component "kube-calico" "$CALICO_VERSION" "addons/kube-calico/${CALICO_VERSION}/calico-init.yaml"
             ;;
+        descheduler)
+            DESCHEDULER_VERSION=${2:-$DESCHEDULER_VERSION}
+            install_component "kube-descheduler" "$DESCHEDULER_VERSION" "addons/kube-descheduler/${DESCHEDULER_VERSION}" kube-system
+            ;;
         dashboard)
-            DASHBOARD_VERSION=$2
-            if [ -z "$DASHBOARD_VERSION" ]; then
-                log "请提供 dashboard 版本号"
-                exit 1
-            fi
-            log "准备安装 dashboard 版本 $DASHBOARD_VERSION"
+            DASHBOARD_VERSION=${2:-$DASHBOARD_VERSION}
             dashboard $DASHBOARD_VERSION
             ;;
         ingress-nginx)
-            INGRESS_NGINX_VERSION=$2
-            if [ -z "$INGRESS_NGINX_VERSION" ]; then
-                log "请提供 ingress-nginx 版本号"
-                exit 1
-            fi
-            log "准备安装 ingress-nginx 版本 $INGRESS_NGINX_VERSION"
+            INGRESS_NGINX_VERSION=${2:-$INGRESS_NGINX_VERSION}
+            check_ingress_exclusive nginx traefik
             install_component "ingress-nginx" "$INGRESS_NGINX_VERSION" "addons/kube-ingress-nginx/$INGRESS_NGINX_VERSION/ingress-nginx-init.yaml"
             ;;
         metrics)
-            METRICS_VERSION=$2
-            STATE_METRICS_STANDARD_VERSION=$3
-            if [ -z "$METRICS_VERSION" ] || [ -z "$STATE_METRICS_STANDARD_VERSION" ]; then
-                log "请提供 metrics 和 state-metrics-standard 版本号"
-                exit 1
-            fi
-            log "准备安装 metrics 版本 $METRICS_VERSION 和 state-metrics-standard 版本 $STATE_METRICS_STANDARD_VERSION"
-            install_component "metrics" "$METRICS_VERSION" "addons/kube-metrics/${METRICS_VERSION}/metrics-init.yaml"
-            install_component "kube-state-metrics" "$STATE_METRICS_STANDARD_VERSION" "addons/kube-state-metrics-standard/${STATE_METRICS_STANDARD_VERSION}"
+            METRICS_VERSION=${2:-$METRICS_VERSION}
+            STATE_METRICS_STANDARD_VERSION=${3:-$STATE_METRICS_STANDARD_VERSION}
+            install_component "metrics" "$METRICS_VERSION" "addons/kube-metrics/${METRICS_VERSION}/metrics-init.yaml" kube-system
+            install_component "kube-state-metrics" "$STATE_METRICS_STANDARD_VERSION" "addons/kube-state-metrics-standard/${STATE_METRICS_STANDARD_VERSION}" kube-system
             ;;
         taint)
             KUBE_NODE_NAME=$2
@@ -120,27 +159,44 @@ function main_entrance() {
             fi
             taint "$KUBE_NODE_NAME"
             ;;
+        cert-manager)
+            cert_manager
+            ;;
+        traefik)
+            traefik
+            ;;
+        openobserve)
+            openobserve
+            ;;
+        otel)
+            otel
+            ;;
+        longhorn)
+            longhorn
+            ;;
         all)
-            FLANNEL_VERSION=$2
-            CALICO_VERSION=$3
-            DASHBOARD_VERSION=$4
-            INGRESS_NGINX_VERSION=$5
-            METRICS_VERSION=$6
-            STATE_METRICS_STANDARD_VERSION=$7
-            # 检查所有版本参数是否提供
-            if [ -z "$FLANNEL_VERSION" ] || [ -z "$CALICO_VERSION" ] || [ -z "$DASHBOARD_VERSION" ] || \
-               [ -z "$INGRESS_NGINX_VERSION" ] || [ -z "$METRICS_VERSION" ] || [ -z "$STATE_METRICS_STANDARD_VERSION" ]; then
-                log "请提供所有组件的版本号: flannel, calico, dashboard, ingress-nginx, metrics, state-metrics-standard"
-                exit 1
-            fi
-            
+            FLANNEL_VERSION=${2:-$FLANNEL_VERSION}
+            CALICO_VERSION=${3:-$CALICO_VERSION}
+            DASHBOARD_VERSION=${4:-$DASHBOARD_VERSION}
+            INGRESS_NGINX_VERSION=${5:-$INGRESS_NGINX_VERSION}
+            METRICS_VERSION=${6:-$METRICS_VERSION}
+            STATE_METRICS_STANDARD_VERSION=${7:-$STATE_METRICS_STANDARD_VERSION}
             log "准备安装所有组件..."
-            install_component "kube-flannel" "$FLANNEL_VERSION" "addons/kube-flannel/${FLANNEL_VERSION}/flannel-init.yaml"
-            install_component "kube-calico" "$CALICO_VERSION" "addons/kube-calico/${CALICO_VERSION}/calico-init.yaml"
+            # CNI 跟随 KUBE_NETWORK 二选一(两套 CNI 共存会冲突)
+            if [[ $KUBE_NETWORK == "calico" ]]; then
+                install_component "kube-calico" "$CALICO_VERSION" "addons/kube-calico/${CALICO_VERSION}/calico-init.yaml"
+            else
+                install_component "kube-flannel" "$FLANNEL_VERSION" "addons/kube-flannel/${FLANNEL_VERSION}/flannel-init.yaml"
+            fi
             dashboard $DASHBOARD_VERSION
+            check_ingress_exclusive nginx traefik
             install_component "ingress-nginx" "$INGRESS_NGINX_VERSION" "addons/kube-ingress-nginx/$INGRESS_NGINX_VERSION/ingress-nginx-init.yaml"
-            install_component "metrics" "$METRICS_VERSION" "addons/kube-metrics/${METRICS_VERSION}/metrics-init.yaml"
-            install_component "kube-state-metrics" "$STATE_METRICS_STANDARD_VERSION" "addons/kube-state-metrics-standard/${STATE_METRICS_STANDARD_VERSION}"
+            install_component "metrics" "$METRICS_VERSION" "addons/kube-metrics/${METRICS_VERSION}/metrics-init.yaml" kube-system
+            install_component "kube-state-metrics" "$STATE_METRICS_STANDARD_VERSION" "addons/kube-state-metrics-standard/${STATE_METRICS_STANDARD_VERSION}" kube-system
+            ;;
+        *)
+            echo "Usage: $0 {flannel|calico|dashboard|ingress-nginx|metrics|descheduler|traefik|cert-manager|openobserve|otel|longhorn|taint|all}"
+            exit 1
             ;;
     esac
 }
