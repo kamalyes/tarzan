@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openobserve
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: openobserve
+spec:
+  serviceName: openobserve
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openobserve
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openobserve
+    spec:
+      containers:
+        - name: openobserve
+          image: {{OPENOBSERVE_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          env:
+            - name: ZO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{MONITORING_SECRETS}}
+                  key: OPENOBSERVE_ROOT_USER
+            - name: ZO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{MONITORING_SECRETS}}
+                  key: OPENOBSERVE_ROOT_PASSWORD
+            - name: ZO_DATA_DIR
+              value: /data
+            - name: ZO_ENABLE_GRPC
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 5080
+            - name: grpc
+              containerPort: 5081
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2
+              memory: 4Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{LONGHORN_STORAGE_CLASS}}
+        resources:
+          requests:
+            storage: 20Gi
