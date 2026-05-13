@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cockroachdb
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: cockroachdb
+spec:
+  serviceName: cockroachdb
+  podManagementPolicy: Parallel
+  replicas: {{COCKROACHDB_REPLICAS}}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cockroachdb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cockroachdb
+    spec:
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: certs
+          secret:
+            secretName: cockroachdb-certs
+            defaultMode: 0400
+      containers:
+        - name: cockroachdb
+          image: {{COCKROACHDB_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              exec /cockroach/cockroach start --certs-dir=/cockroach/cockroach-certs --advertise-host="$(hostname -f)" --http-addr=0.0.0.0:8080 --listen-addr=0.0.0.0:26257 --join={{COCKROACHDB_JOIN}} --cache=25% --max-sql-memory=25%
+          ports:
+            - name: grpc
+              containerPort: 26257
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /cockroach/cockroach-data
+            - name: certs
+              mountPath: /cockroach/cockroach-certs
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health?ready=1
+              port: http
+              scheme: HTTPS
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 1200m
+              memory: 5Gi
+            limits:
+              cpu: 2
+              memory: 8Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{LONGHORN_STORAGE_CLASS}}
+        resources:
+          requests:
+            storage: 50Gi

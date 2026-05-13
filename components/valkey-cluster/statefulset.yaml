@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: valkey-wallet-cls-config
+  namespace: {{COMPONENT_NAMESPACE}}
+data:
+  valkey.conf: |
+    port 6379
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout 5000
+    dir /data
+    appendonly yes
+    appendfsync everysec
+    protected-mode no
+    cluster-preferred-endpoint-type hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-wallet-cls-headless
+  namespace: {{COMPONENT_NAMESPACE}}
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: valkey-wallet-cls
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+    - name: cluster
+      port: 16379
+      targetPort: 16379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey-wallet-cls
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: valkey-wallet-cls
+spec:
+  serviceName: valkey-wallet-cls-headless
+  replicas: {{VALKEY_CLUSTER_REPLICAS}}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: valkey-wallet-cls
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: valkey-wallet-cls
+    spec:
+      containers:
+        - name: valkey
+          image: {{VALKEY_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              POD_NAME=$(hostname)
+              SERVICE_NAME="valkey-wallet-cls-headless"
+              NAMESPACE="{{COMPONENT_NAMESPACE}}"
+              POD_FQDN="${POD_NAME}.${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local"
+
+              # 核心机制：启动时自动修正 /data/nodes.conf 中的历史旧 IP 映射
+              NODES_CONF="/data/nodes.conf"
+              if [ -f "$NODES_CONF" ]; then
+                echo "正在自动更新 $NODES_CONF 中的节点 IP 地址映射..."
+                for i in $(seq 0 {{VALKEY_CLUSTER_SEQ_END}}); do
+                  NODE_HOST="valkey-wallet-cls-$i.${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local"
+                  REAL_IP=$(getent hosts $NODE_HOST | awk '{ print $1 }')
+                  if [ -n "$REAL_IP" ]; then
+                    sed -i -E "s/([0-9]{1,3}\.){3}[0-9]{1,3}(:[0-9]+@[0-9]+,${NODE_HOST})/$REAL_IP\2/g" "$NODES_CONF"
+                  fi
+                done
+              fi
+
+              exec valkey-server /etc/valkey/valkey.conf \
+                --requirepass "${VALKEY_PASSWORD}" \
+                --masterauth "${VALKEY_PASSWORD}" \
+                --cluster-announce-ip "${POD_IP}" \
+                --cluster-announce-hostname "${POD_FQDN}" \
+                --cluster-announce-port 6379 \
+                --cluster-announce-bus-port 16379
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: VALKEY_WALLET_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+            - name: cluster
+              containerPort: 16379
+          volumeMounts:
+            - name: config
+              mountPath: /etc/valkey
+            - name: data-cls
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - valkey-cli -a "${VALKEY_PASSWORD}" ping | grep -q PONG
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - valkey-cli -a "${VALKEY_PASSWORD}" ping | grep -q PONG
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 300m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        - name: config
+          configMap:
+            name: valkey-wallet-cls-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data-cls
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{LONGHORN_STORAGE_CLASS}}
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: valkey-wallet-cls-init
+  namespace: {{COMPONENT_NAMESPACE}}
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: cluster-init
+          image: {{VALKEY_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: VALKEY_WALLET_PASSWORD
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "等待所有 Pod 处于 Ready 状态..."
+              NODES=""
+              for i in $(seq 0 {{VALKEY_CLUSTER_SEQ_END}}); do
+                NODE_HOST="valkey-wallet-cls-$i.valkey-wallet-cls-headless.{{COMPONENT_NAMESPACE}}.svc.cluster.local"
+                until valkey-cli -h $NODE_HOST -a "$VALKEY_PASSWORD" ping | grep -q PONG; do
+                  echo "等待节点 $NODE_HOST 启动..."
+                  sleep 3
+                done
+                NODE_IP=$(getent hosts $NODE_HOST | awk '{ print $1 }')
+                NODES="$NODES $NODE_IP:6379"
+              done
+
+              FIRST_NODE="valkey-wallet-cls-0.valkey-wallet-cls-headless.{{COMPONENT_NAMESPACE}}.svc.cluster.local"
+
+              # 避免重启时因为 cluster_state:fail 误判重新建群
+              SLOTS_ASSIGNED=$(valkey-cli -h $FIRST_NODE -a "$VALKEY_PASSWORD" cluster info | grep cluster_slots_assigned | cut -d: -f2 | tr -d '\r')
+
+              if [ "$SLOTS_ASSIGNED" -gt 0 ]; then
+                echo "检测到集群已初始化 (已分配 $SLOTS_ASSIGNED 个槽位)，跳过创建步骤。"
+                exit 0
+              fi
+
+              echo "开始创建 Valkey 集群 (3主3从)..."
+              echo "yes" | valkey-cli -a "$VALKEY_PASSWORD" --cluster create $NODES --cluster-replicas 1
+              echo "集群初始化成功！"

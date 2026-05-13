@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: cockroachdb
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: cockroachdb
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: cockroachdb
+  ports:
+    - name: grpc
+      port: 26257
+      targetPort: grpc
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cockroachdb-public
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: cockroachdb
+spec:
+  selector:
+    app.kubernetes.io/name: cockroachdb
+  ports:
+    - name: grpc
+      port: 26257
+      targetPort: grpc
+    - name: http
+      port: 8080
+      targetPort: http

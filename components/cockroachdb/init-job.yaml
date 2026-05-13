@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cockroachdb-init
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: cockroachdb
+spec:
+  backoffLimit: 12
+  template:
+    spec:
+      restartPolicy: OnFailure
+      volumes:
+        - name: certs
+          secret:
+            secretName: cockroachdb-certs
+            defaultMode: 0400
+      containers:
+        - name: init
+          image: {{COCKROACHDB_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until /cockroach/cockroach init --certs-dir=/cockroach/cockroach-certs --host=cockroachdb-0.cockroachdb.{{COMPONENT_NAMESPACE}}.svc.cluster.local:26257 2>&1 | tee /tmp/cockroach-init.log; do
+                if grep -qi 'already.*initialized' /tmp/cockroach-init.log; then
+                  exit 0
+                fi
+                sleep 5
+              done
+          volumeMounts:
+            - name: certs
+              mountPath: /cockroach/cockroach-certs
+              readOnly: true
