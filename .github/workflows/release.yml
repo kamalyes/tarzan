@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 内置 GITHUB_TOKEN 需要写权限才能创建 Release
 
     steps:
     - name: 🤖 Checkout code
@@ -18,7 +20,7 @@ jobs:
     - name: ⚙️ Set up variables
       run: |
         set -e  # 在出现错误时立即退出
-        COMMON_FILES="addons conf docs offline utils *.sh README.md"
+        COMMON_FILES="addons components conf docs offline utils *.sh README.md"
 
         get_included_dirs() {
             local root_dir="$1"
@@ -84,16 +86,16 @@ jobs:
 
         # 使用 commit ID 和 tag 名称创建 tar.gz 文件
 
+        # 包型组织: CentOS 7 离线三件套 + 通用在线包(CentOS 7/8、Debian, 安装时自动识别本机系统)
+        create_tar "${{ env.filename_prefix }}-centos7-offline-multiple.tar.gz" "tarzan-centos7-offline-multiple"
+        create_tar "${{ env.filename_prefix }}-centos7-offline-1.23.3.tar.gz" "tarzan-centos7-offline-1.23.3" ${{ env.EXCLUDE_1_23_3 }}
+        create_tar "${{ env.filename_prefix }}-centos7-offline-1.28.2.tar.gz" "tarzan-centos7-offline-1.28.2" ${{ env.EXCLUDE_1_28_2 }}
         create_tar "${{ env.filename_prefix }}-online.tar.gz" "tarzan-online" ${{ env.EXCLUDE_ONLINE }}
-        create_tar "${{ env.filename_prefix }}-offline-1.23.3.tar.gz" "tarzan-offline-1.23.3" ${{ env.EXCLUDE_1_23_3 }}
-        create_tar "${{ env.filename_prefix }}-offline-1.28.2.tar.gz" "tarzan-offline-1.28.2" ${{ env.EXCLUDE_1_28_2 }}
-        create_tar "${{ env.filename_prefix }}-offline-multiple.tar.gz" "tarzan-offline-multiple"
 
     - name: 📤 Upload Release Assets
       uses: softprops/action-gh-release@v2
       env:
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ github.ref }}  # 使用当前标签作为发布的标签
         name: Release ${{ github.ref }}  # 发布名称
@@ -101,7 +103,7 @@ jobs:
         draft: false  # 不创建草稿
         prerelease: false  # 不标记为预发布
         files: |
+          ${{ env.filename_prefix }}-centos7-offline-multiple.tar.gz
+          ${{ env.filename_prefix }}-centos7-offline-1.23.3.tar.gz
+          ${{ env.filename_prefix }}-centos7-offline-1.28.2.tar.gz
           ${{ env.filename_prefix }}-online.tar.gz
-          ${{ env.filename_prefix }}-offline-1.23.3.tar.gz
-          ${{ env.filename_prefix }}-offline-1.28.2.tar.gz
-          ${{ env.filename_prefix }}-offline-multiple.tar.gz
