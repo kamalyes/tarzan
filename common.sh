@@ -179,6 +179,9 @@ function enable_service() {
   local service_name=$1
   # 设置心跳检测的时间间隔（秒）
   heartbeat_interval=3
+  # 心跳检测最大重试次数(kubelet 在集群初始化前 crash-loop 属预期状态, 不应无限等待)
+  local max_attempts=5
+  local attempt=0
   check_components "$service_name"
   while true; do
       # log "所有已启用的服务："
@@ -193,7 +196,8 @@ function enable_service() {
       fi
       # 检查服务是否存活
       log "检查 $service_name 服务是否为运行状态"
-      status=$(systemctl is-active $service_name)
+      # is-active 对 activating/failed 状态返回退出码 3, 加 || true 防止 set -e 误杀宿主脚本
+      status=$(systemctl is-active $service_name || true)
       if [[ $status == "active" ]]; then
           # 如果服务存活，输出提示信息
           log "$service_name 服务已运行"
@@ -201,8 +205,13 @@ function enable_service() {
       else
           # 如果服务不存活，输出提示信息
           log "$service_name 服务状态 $status"
+          attempt=$((attempt + 1))
+          if [[ $attempt -ge $max_attempts ]]; then
+              color_echo ${yellow} "$service_name 服务在 $max_attempts 次心跳检测后仍未运行, 跳过等待"
+              return 0
+          fi
           # 尝试重启服务(由外层 while 循环继续心跳检查, 不递归)
-          run_command "systemctl restart $service_name"
+          run_command "systemctl restart $service_name || true"
       fi
       # 等待心跳检测的时间间隔
       sleep $heartbeat_interval
