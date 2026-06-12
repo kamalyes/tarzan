@@ -78,12 +78,14 @@ CRI_SOCKET_SOCK_FILE="$CONTAINERD_RUN_PATH/containerd.sock"  # CRI 套接字文�
 CRI_RUNTIME_ENDPOINT="unix://$CONTAINERD_RUN_PATH/containerd.sock"  # CRI 运行时端点
 CRICTL_IMAGE_TAR_PATH="$TARZAN_OFFLINE_PATH/crictl-images"  # crictl 镜像 tar 文件路径
 TARGET_FILE="conf/ssh_hosts"  # 目标文件路径
-SSH_PATH="~/.ssh"  # SSH 配置路径
+SSH_PATH="$HOME/.ssh"  # SSH 配置路径
 SSH_PRIVATE_RAS_FILE="$SSH_PATH/id_rsa"  # SSH 私钥文件路径
 SSH_PUBLIC_RAS_FILE="$SSH_PATH/id_rsa.pub"  # SSH 公钥文件路径
 SSH_MAX_PORT=65535
 SSH_COPY_TIMEOUT=600  # ssh 远程分发文件超时(秒), 大文件需要长超时
 SSH_EXEC_TIMEOUT=3600  # ssh 远程执行命令超时(秒), 安装类命令需要长超时
+SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10"  # ssh/scp 公共参数: 密钥免密 + 自动接受已知主机 + 连接超时(网络黑洞时快速失败而不是长时间无输出)
+SSH_ALIVE_OPTS="-o ServerAliveInterval=15 -o ServerAliveCountMax=4"  # 长时操作(传大文件/远程安装)追加保活探测, 链路中断 ~1 分钟内暴露失败
 
 # -------------------
 # 初始化系统配置

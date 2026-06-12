@@ -509,6 +509,153 @@ EOF
     fi
 }
 
+# --- SSH 群控通用能力(基于 conf/ssh_hosts, group-control.sh 与 setup-ssh-keys.sh 共用) ---
+# conf/ssh_hosts 格式: user:host:password[:port] 每行一台, # 之后内容视为注释
+# 连接统一走密钥免密, 密码仅用于首次公钥分发(ensure_passwordless)
+
+# conf/ssh_hosts 存在性校验(群控入口统一调用, 缺失即终止)
+function require_hosts_file() {
+    if [ ! -f "$TARGET_FILE" ]; then
+        color_echo ${red} "配置文件 $TARGET_FILE 不存在, 请创建(格式 user:host:password[:port] 每行一台)"
+        exit 1
+    fi
+}
+
+# 解析 conf/ssh_hosts 为 "user host password port" 行(剥离注释与空行, 端口缺省补默认值)
+function parse_machines() {
+    local line user host password port
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line//[$'\t' ]/}"
+        [[ -z "$line" ]] && continue
+        IFS=':' read -r user host password port <<< "$line"
+        [[ -z "$user" || -z "$host" ]] && continue
+        echo "$user $host $password ${port:-$DEFAULT_SSH_PORT}"
+    done < "$TARGET_FILE"
+}
+
+# 遍历目标机器执行回调, 回调参数: user host password port ...
+# 先读全清单再逐台执行(远程 ssh 会消费 while read 的循环 stdin, 边读边执行会吞掉后续机器)
+# 单台失败不中断其余机器, 全部处理完后聚合返回失败状态
+function for_each_machine() {
+    local exec_fn=$1
+    shift
+    local line user host password port failed=0
+    local machines=()
+    require_hosts_file
+    mapfile -t machines < <(parse_machines)
+    for line in "${machines[@]}"; do
+        read -r user host password port <<< "$line"
+        if ! "$exec_fn" "$user" "$host" "$password" "$port" "$@"; then
+            failed=1
+        fi
+    done
+    return $failed
+}
+
+# 判断目标主机是否本机(网卡 IP 命中, 或云 metadata 公网 IP 命中: 云主机公网 IP 不在网卡上)
+LOCAL_PUBLIC_IP=""
+function is_local_host() {
+    local host=$1
+    hostname -I 2>/dev/null | tr ' ' '\n' | grep -qx "$host" && return 0
+    if [[ -z "$LOCAL_PUBLIC_IP" ]]; then
+        LOCAL_PUBLIC_IP=$(curl -s --connect-timeout 2 --max-time 5 http://metadata.tencentyun.com/latest/meta-data/public-ipv4 2>/dev/null || true)
+        [[ -z "$LOCAL_PUBLIC_IP" ]] && LOCAL_PUBLIC_IP=$(curl -s --connect-timeout 2 --max-time 5 http://100.100.100.200/latest/meta-data/eipv4 2>/dev/null || true)
+        [[ -z "$LOCAL_PUBLIC_IP" ]] && LOCAL_PUBLIC_IP="none"
+    fi
+    [[ "$LOCAL_PUBLIC_IP" != "none" && "$LOCAL_PUBLIC_IP" == "$host" ]]
+}
+
+# SSH 免密自举: 逐台探测密钥认证, 未免密的机器用 conf/ssh_hosts 的密码分发一次公钥(本机跳过)
+function ensure_passwordless() {
+    require_hosts_file
+    if [ ! -f "$SSH_PRIVATE_RAS_FILE" ]; then
+        log "本机不存在 SSH 密钥, 自动生成 $SSH_PRIVATE_RAS_FILE"
+        run_command "ssh-keygen -t rsa -b 4096 -N '' -f $SSH_PRIVATE_RAS_FILE"
+    fi
+    local line user host password port
+    local machines=()
+    mapfile -t machines < <(parse_machines)
+    for line in "${machines[@]}"; do
+        read -r user host password port <<< "$line"
+        if is_local_host "$host"; then
+            continue
+        fi
+        if timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "exit" >/dev/null 2>&1; then
+            continue
+        fi
+        log "[$user@$host] SSH 免密未建立, 自动分发公钥"
+        if ! command -v sshpass >/dev/null 2>&1; then
+            color_echo ${red} "[$user@$host] 缺少 sshpass, 请先安装后重试(yum install -y sshpass)"
+            continue
+        fi
+        # 此处必须走密码认证, 不能带 BatchMode(会禁掉密码认证导致 sshpass 失效)
+        if ! timeout 30 sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host" >/dev/null 2>&1; then
+            color_echo ${red} "[$user@$host] 公钥分发失败, 请检查 conf/ssh_hosts 的密码与端口"
+        fi
+    done
+}
+
+# 单台远程执行命令(for_each_machine 回调)
+function batch_exec() {
+    local user=$1 host=$2 password=$3 port=$4
+    local command="$5"
+    log "[$user@$host] 执行: $command"
+    if timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "$command"; then
+        log "[$user@$host] 执行成功"
+    else
+        color_echo ${red} "[$user@$host] 执行失败"
+        return 1
+    fi
+}
+
+# 单台远程分发文件(for_each_machine 回调)
+function batch_copy() {
+    local user=$1 host=$2 password=$3 port=$4
+    local local_file=$5 remote_path=$6
+    if [ ! -f "$local_file" ]; then
+        color_echo ${red} "本地文件 $local_file 不存在"
+        return 1
+    fi
+    log "[$user@$host] 分发: $local_file -> $remote_path"
+    if timeout $SSH_COPY_TIMEOUT scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$local_file" "$user@$host:$remote_path"; then
+        log "[$user@$host] 分发成功"
+    else
+        color_echo ${red} "[$user@$host] 分发失败"
+        return 1
+    fi
+}
+
+# 批量执行命令(自动免密自举)
+function run_command_on_machines() {
+    local command="$1"
+    if [ -z "$command" ]; then
+        color_echo ${red} "请提供要执行的命令"
+        exit 1
+    fi
+    ensure_passwordless
+    for_each_machine batch_exec "$command"
+}
+
+# 批量分发文件(自动免密自举)
+function copy_file_to_machines() {
+    local local_file=$1
+    local remote_path=${2:-$DEFAULT_SSH_TARGET_PATH}
+    if [ -z "$local_file" ]; then
+        color_echo ${red} "请提供要分发的本地文件"
+        exit 1
+    fi
+    ensure_passwordless
+    for_each_machine batch_copy "$local_file" "$remote_path"
+}
+
+# 打印目标机器清单
+function list_machines() {
+    require_hosts_file
+    log "目标机器清单($TARGET_FILE):"
+    parse_machines | awk '{printf "  %s@%s:%s\n", $1, $2, $4}'
+}
+
 function main_entrance() {
   case "${action}" in
     enable_service)

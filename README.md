@@ -23,7 +23,7 @@ graph TB
     SCRIPTS -- "① kubeadm init 拉起控制面" --> CP
     SCRIPTS -- "② install-addons.sh 自动装 CNI" --> CNI
     SCRIPTS -- "③ 可选 --traefik / --ingress-nginx" --> ING
-    SCRIPTS -- "④ sshpass+ssh 分发 kube_slave.tar.gz<br/>并远程执行 install-kube.sh --join" --> NODE
+    SCRIPTS -- "④ ssh 免密分发 kube_slave.tar.gz<br/>并远程执行 install-kube.sh --join" --> NODE
     NODE -- "⑤ kubeadm join :6443" --> CP
 ```
 
@@ -31,7 +31,7 @@ graph TB
 
 ```mermaid
 flowchart TD
-    A["① 前置准备（master）<br/>conf/hosts 填集群机器清单<br/>conf/ssh_hosts 填 slave 清单<br/>setup-ssh-keys.sh 建立免密"] --> B["② 安装 Master（master）<br/>sh install-kube.sh --flannel --hostname k8s-master"]
+    A["① 前置准备（master）<br/>conf/hosts 填集群机器清单<br/>conf/ssh_hosts 填 slave 清单<br/>免密由群控自动建立"] --> B["② 安装 Master（master）<br/>sh install-kube.sh --flannel --hostname k8s-master"]
     B --> B1["系统初始化 · containerd · kubeadm init"]
     B1 --> B2["自动安装 CNI（--flannel / --calico 二选一）<br/>可选 Ingress（--traefik / --ingress-nginx 二选一）"]
     B2 --> B3["生成 kube_slave.tar.gz<br/>并打印 kubeadm join 命令"]
@@ -41,7 +41,7 @@ flowchart TD
     C2 --> C3["远程执行 install-kube.sh --join"]
     C3 --> D["④ 验证（master）<br/>kubectl get nodes 全部 Ready"]
     D --> E{"后续新增 Slave？"}
-    E -- "清单追加新机器 + 免密<br/>重跑 install-slaves" --> C
+    E -- "清单追加新机器<br/>重跑 install-slaves" --> C
     E -- "按需扩展" --> F["⑤ 可选扩展<br/>install-addons.sh（traefik/longhorn/...）<br/>install-components.sh（业务组件）"]
 ```
 
@@ -128,31 +128,17 @@ CentOS Linux release 7.9.209 (Core)
 EOF'
 # 安装时脚本会把 conf/hosts 同步到所有机器的 /etc/hosts
 
-# 2. 检查 sshpass（群控依赖, 看到这里即 OK）
-[root@k8s-master tarzan]# which sshpass
-/usr/bin/sshpass
-# 如果没有: CentOS 7 离线包执行 rpm 安装, 在线按系统执行
-[root@k8s-master tarzan]# rpm -ivhU offline/base-dependence/sshpass-1.06-2.el7.x86_64.rpm --nodeps --force   # CentOS 7 离线包
-[root@k8s-master tarzan]# yum install -y sshpass    # CentOS 7 在线
-[root@k8s-master tarzan]# dnf install -y sshpass    # CentOS 8 在线
-[root@k8s-master tarzan]# apt-get install -y sshpass # Debian 在线
-
-# 3. 配置受管机器清单 conf/ssh_hosts, 格式 user:host:password[:port] 每行一台
-#    行首加 # 可注释跳过（新增/剔除节点就靠它）
+# 2. 配置受管机器清单 conf/ssh_hosts, 格式 user:host:password[:port] 每行一台
+#    行首 # 或行内 # 之后的内容都会被忽略（新增/剔除节点就靠注释）
 [root@k8s-master tarzan]# bash -c 'cat << EOF >> conf/ssh_hosts
 root:10.0.0.8:2235678:22
 root:10.0.0.9:3235678:22
 root:10.0.0.10:3235678:2222  # 注意使用非标准端口
 EOF'
 
-# 4. 建立免密（重复执行没有关系）
-[root@k8s-master tarzan]# chmod +x setup-ssh-keys.sh
-[root@k8s-master tarzan]# ./setup-ssh-keys.sh generate_ssh_key（遇到提示一直回车）
-[root@k8s-master tarzan]# ./setup-ssh-keys.sh setup_ssh_for_targets
-## [Tarzan Log]: 2024-09-27 11:23:00 - 生成新的 SSH 密钥对...
-## [Tarzan Log]: 2024-09-27 11:23:00 - 正在将公钥复制到 root@10.0.0.8 ...
-## [Tarzan Log]: 2024-09-27 11:23:00 - 复制公钥到 root@10.0.0.8 成功
-.....
+# 3. 免密无需手动建立: 群控命令(exec/copy/install-slaves)首次执行时自动生成本机密钥
+#    并对未免密的机器分发公钥, conf/ssh_hosts 里的密码仅用于这一次分发, 之后全走密钥免密
+#    (首次分发依赖 sshpass: CentOS 7 离线包已自带 rpm, 在线环境 yum install -y sshpass)
 ```
 
 # 安装 Master
@@ -191,7 +177,7 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 [root@k8s-master tarzan]# ./group-control.sh install-slaves
 ```
 
-脚本自动完成：动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 逐台分发 `kube_slave.tar.gz` → 远程解压并执行 `install-kube.sh --join`
+脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 逐台分发 `kube_slave.tar.gz` → 远程解压并执行 `install-kube.sh --join`
 
 注意：`install-slaves` 会**自动跳过**清单里的 master 与已加入集群的节点（按 `/etc/kubernetes/kubelet.conf` 判断），清单无需注释已装机器；某台安装失败会明确报错且不影响其余机器继续安装，全部装完后整体退出码非 0
 
@@ -234,10 +220,7 @@ k8s-node3    Ready    <none>                 10m   v1.23.3   10.0.0.10         <
 [root@k8s-master tarzan]# echo "10.0.0.11 k8s-node4" >> conf/hosts
 [root@k8s-master tarzan]# echo "root:10.0.0.11:4235678:22" >> conf/ssh_hosts
 
-# 2. 给新机器建立免密
-[root@k8s-master tarzan]# ./setup-ssh-keys.sh setup_ssh_for_targets
-
-# 3. 一键安装(与初次安装完全相同的命令, 已在集群的机器自动跳过, 只装新机器)
+# 2. 一键安装(与初次安装完全相同的命令, 新机器免密自动建立, 已在集群的机器自动跳过)
 [root@k8s-master tarzan]# ./group-control.sh install-slaves
 ```
 
