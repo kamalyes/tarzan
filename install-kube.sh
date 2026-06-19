@@ -220,20 +220,6 @@ function install_ingress_plugin(){
     fi
 }
 
-function slave_join(){
-    log "配置slave节点kubernetes admin.config"
-    local kube_admin_path="$HOME/.kube/config"
-    if [ -f "$kube_admin_path" ]; then
-        mv "$kube_admin_path" "$HOME/.kube/config.bak"
-    else
-        mkdir -p "$HOME/.kube"
-    fi
-    cp -i ./kubernetes-admin.config "$kube_admin_path"
-    chown $(id -u):$(id -g) "$kube_admin_path"
-    # slave 节点不存在 /etc/kubernetes/admin.conf, KUBECONFIG 指向刚安装的配置
-    grep -q "export KUBECONFIG=$kube_admin_path" ~/.bashrc || echo "export KUBECONFIG=$kube_admin_path" >>$HOME/.bashrc
-}
-
 function sub_slave_rely(){
     log "创建Kube Node连接所需要的Token"
     run_command "kubeadm token create --print-join-command --ttl=0"
@@ -250,9 +236,9 @@ function sub_slave_rely(){
     fi
     # 复制所有的 .sh 文件到 $NODE_PACKAGE_PATH
     cp *.sh "$NODE_PACKAGE_PATH"
-    cp -i $KUBE_ADMIN_CONFIG_FILE $NODE_PACKAGE_PATH/kubernetes-admin.config
+    # kubectl 凭证不打包(master 的 admin.conf 是敏感凭证), slave 加入集群后由 group-control.sh install-slaves 统一分发到 ~/.kube/config
     tar -czPf $NODE_PACKAGE_PATH.tar.gz $NODE_PACKAGE_PATH
-    log "组装完成、请scp $NODE_PACKAGE_PATH.tar.gz 至slave节点"
+    log "组装完成, 在 master 执行 ./group-control.sh install-slaves 一键分发安装(或手动 scp 至slave节点)"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -425,7 +411,7 @@ main() {
         init_master
     fi
     if [[ $KUBE_JOIN_MODE == 1 ]]; then
-        slave_join
+        # kubectl 凭证(kubeconfig)不再由包内携带, join 完成后由群控统一分发
         run_command "kubeadm join $MASTER_IP --token $KUBE_TOKEN --discovery-token-ca-cert-hash $DISCOVERY_TOKEN_CA_CERT_HASH "
     fi
 }

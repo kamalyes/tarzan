@@ -19,7 +19,6 @@ green="32m"  # 绿色
 yellow="33m"  # 黄色
 blue="36m"  # 蓝色
 fuchsia="35m"  # 紫红色
-message_title="[$COMMON_NAME Log]: $(date +'%Y-%m-%d %H:%M:%S') -"  # 日志标题，包含当前时间
 
 
 # -------------------

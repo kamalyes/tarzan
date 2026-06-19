@@ -9,7 +9,8 @@ set -e  # 如果任何命令失败，退出脚本
 trap 'echo "An error occurred. Exiting."; exit 1;' ERR
 
 function log() {
-    message="$message_title $1 "
+    # 时间戳实时生成(若在 source 时求值会固定为脚本启动时刻, 长流程日志无法判断实际耗时)
+    message="[$COMMON_NAME Log]: $(date +'%Y-%m-%d %H:%M:%S') - $1 "
     echo -e "\033[32m## ${message} \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
 }
 
@@ -18,8 +19,8 @@ function color_title() {
 }
 
 function color_echo() {
-  # 输出带颜色的文本，并同时记录到日志文件
-  message="$message_title $2 "
+  # 输出带颜色的文本，并同时记录到日志文件(时间戳实时生成, 同 log)
+  message="[$COMMON_NAME Log]: $(date +'%Y-%m-%d %H:%M:%S') - $2 "
   echo -e "\033[$1## ${message} \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
 }
 

@@ -29,18 +29,36 @@ function slave_install() {
         log "[$user@$host] 已加入集群, 跳过(如需重新加入请先在该机执行 clean-residue.sh 清理残留)"
         return 0
     fi
-    log "[$user@$host] 分发 slave 安装包"
+    # scp 非交互模式无进度条, 预告包大小给出传输时长预期, 传完回显耗时
+    local pkg_size=$(du -h "$package" | awk '{print $1}')
+    local start_ts=$(date +%s)
+    log "[$user@$host] 分发 slave 安装包(${pkg_size}, 大文件公网传输需静默等待数分钟)"
     timeout $SSH_COPY_TIMEOUT scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$package" "$user@$host:~/" || {
         color_echo ${red} "[$user@$host] 安装包分发失败"
         return 1
     }
-    log "[$user@$host] 远程安装并加入集群"
+    local cost=$(( $(date +%s) - start_ts ))
+    log "[$user@$host] 安装包分发完成(耗时 $((cost/60))分$((cost%60))秒)"
+    # 拆两步回显: GB 级包解压期间 tar 无输出(云盘 IO 慢需数分钟), 与 install-kube.sh 阶段分开才能定位等待点
+    log "[$user@$host] 远程解压安装包(解压期间无输出, 视云盘性能需 1-5 分钟)"
     timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-        "tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~ && cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
+        "tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~" || {
+        color_echo ${red} "[$user@$host] 安装包解压失败"
+        return 1
+    }
+    log "[$user@$host] 远程执行 install-kube.sh --join(安装日志将流式回显)"
+    timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
         color_echo ${red} "[$user@$host] slave 安装失败"
         return 1
     }
     log "[$user@$host] slave 安装完成"
+    # 分发 master 的 admin.conf 作为 slave 的 kubectl 凭证(增强体验, 失败不阻塞节点加入)
+    log "[$user@$host] 分发 kubectl 凭证(支持在该机使用 kubectl 管理集群)"
+    timeout 60 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "mkdir -p ~/.kube && cat > ~/.kube/config && chmod 600 ~/.kube/config" < "$KUBE_ADMIN_CONFIG_FILE" \
+        || color_echo ${yellow} "[$user@$host] kubectl 凭证分发失败(不影响集群加入, 可手动拷贝 master 的 $KUBE_ADMIN_CONFIG_FILE 到该机 ~/.kube/config)"
+    log "[$user@$host] 全部完成"
 }
 
 # 一键安装所有 slave: 免密自举后动态生成 join 凭据(kubeadm token), 批量分发安装
