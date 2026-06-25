@@ -29,23 +29,53 @@ function slave_install() {
         log "[$user@$host] 已加入集群, 跳过(如需重新加入请先在该机执行 clean-residue.sh 清理残留)"
         return 0
     fi
-    # scp 非交互模式无进度条, 预告包大小给出传输时长预期, 传完回显耗时
+    # 包存在性按需检查: 只有待安装(fresh)机器需要安装包, 已加入机器在包缺失时也应正常跳过
+    if [ ! -f "$package" ]; then
+        color_echo ${red} "未找到 $package, 请先在 master 执行 install-kube.sh 生成 slave 安装包"
+        return 1
+    fi
+    # scp 非交互模式无进度条, 预告包大小给出传输时长预期, 传完回显耗时(传输实现走 common.sh remote_copy: 优先 rsync 断点续传)
     local pkg_size=$(du -h "$package" | awk '{print $1}')
     local start_ts=$(date +%s)
     log "[$user@$host] 分发 slave 安装包(${pkg_size}, 大文件公网传输需静默等待数分钟)"
-    timeout $SSH_COPY_TIMEOUT scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$package" "$user@$host:~/" || {
+    remote_copy "$user" "$host" "$port" "$package" "~/" || {
         color_echo ${red} "[$user@$host] 安装包分发失败"
         return 1
     }
     local cost=$(( $(date +%s) - start_ts ))
     log "[$user@$host] 安装包分发完成(耗时 $((cost/60))分$((cost%60))秒)"
-    # 拆两步回显: GB 级包解压期间 tar 无输出(云盘 IO 慢需数分钟), 与 install-kube.sh 阶段分开才能定位等待点
-    log "[$user@$host] 远程解压安装包(解压期间无输出, 视云盘性能需 1-5 分钟)"
-    timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+    # 拆两步回显: 解压在目标机执行且无输出(吃目标机 CPU/磁盘, 与 master 无关), 与 install-kube.sh 阶段分开才能定位等待点
+    log "[$user@$host] 远程解压安装包(${pkg_size}, 解压在目标机执行, 每 15 秒探测远端 tar 进程)"
+    # 并行监控: 直接查远端 tar 进程判活(比大小稳定更直接), 进程消失即解压结束
+    (
+        while true; do
+            sleep 15
+            # set -e 下命令替换失败会杀掉本监控子 shell, 必须兜底
+            # pgrep 模式用 [t]ar 规避自匹配(远端 shell 的命令行本身含 tar -xzf 字样)
+            state=$(timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" \
+                "if pgrep -f '[t]ar -xzf.*${NODE_PACKAGE_PATH}' >/dev/null 2>&1; then du -sh ~/${NODE_PACKAGE_PATH} 2>/dev/null; else echo __DONE__; fi" 2>/dev/null || true)
+            case "$state" in
+                __DONE__)
+                    echo "  [$user@$host] 远端解压进程已结束(若久无后续输出为 ssh 会话僵死, 可 Ctrl+C 后重跑, 幂等)"
+                    break
+                    ;;
+                "") : ;;
+                *) echo "  [$user@$host] 解压中, 已写入: ${state}" ;;
+            esac
+        done
+    ) &
+    local monitor_pid=$!
+    # 解压是短时 IO 操作, 单独收紧超时(默认 300s, 不复用 3600s 的安装级超时), 失败时提示重跑可跳过
+    timeout 300 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
         "tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~" || {
-        color_echo ${red} "[$user@$host] 安装包解压失败"
+        # set -e 下 kill/wait 失败(进程已退出)会误杀主脚本, 必须兜底
+        kill $monitor_pid 2>/dev/null || true
+        color_echo ${red} "[$user@$host] 安装包解压失败, 重跑 install-slaves 即可(已传文件不重传, 解压幂等覆盖)"
         return 1
     }
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
+    log "[$user@$host] 安装包解压完成"
     log "[$user@$host] 远程执行 install-kube.sh --join(安装日志将流式回显)"
     timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
         "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
@@ -65,10 +95,6 @@ function slave_install() {
 function install_slaves() {
     ensure_passwordless
     local package="${NODE_PACKAGE_PATH}.tar.gz"
-    if [ ! -f "$package" ]; then
-        color_echo ${red} "未找到 $package, 请先在 master 执行 install-kube.sh 生成 slave 安装包"
-        exit 1
-    fi
     # 动态生成 join 凭据(不复用旧 token, 60s 上限防止 API 未就绪时无限等待)
     local join_command
     log "动态生成 join 凭据(kubeadm token create)"

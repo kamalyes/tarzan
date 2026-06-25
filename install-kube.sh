@@ -330,6 +330,10 @@ while [[ $# -gt 0 ]]; do
         KUBE_JOIN_MODE=1
         echo "Joining the Kubernetes cluster"
         ;;
+        --pack-slave)
+        PACK_SLAVE_ONLY=1
+        echo "Rebuild the slave install package only"
+        ;;
         --masterip)
         if [[ -z "$2" ]]; then
             color_echo ${red} "Error: --masterip requires an argument"
@@ -372,6 +376,7 @@ while [[ $# -gt 0 ]]; do
         echo "   --pod-subnet                                default=$KUBE_POD_SUBNET"
         echo "   --serviceSubnet                             default=$KUBE_SERVICE_SUBNET"
         echo "   --join                                      join the Kubernetes cluster"
+        echo "   --pack-slave                                rebuild the slave install package only (for master already installed)"
         echo "   --masterip                                  master node IP address"
         echo "   --discovery-token-ca-cert-hash              discovery token CA cert hash"
         echo "   -create-vreth|--create-virtualeth           default=false"
@@ -401,6 +406,11 @@ main() {
     # join 幂等: 已在集群中的机器(master/已加入 slave 均有 kubelet.conf)直接跳过, 避免重复执行报 FileAvailable 错误
     if [[ $KUBE_JOIN_MODE == 1 && -f /etc/kubernetes/kubelet.conf ]]; then
         log "本机已在 Kubernetes 集群中(/etc/kubernetes/kubelet.conf 已存在), 跳过加入; 如需重新加入请先执行 clean-residue.sh 清理残留"
+        exit 0
+    fi
+    # 仅重新组装 slave 安装包(master 已就绪, 不重跑安装流程), 用于安装包被清理后补包
+    if [[ $PACK_SLAVE_ONLY == 1 ]]; then
+        sub_slave_rely
         exit 0
     fi
     upload_hosts

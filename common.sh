@@ -591,7 +591,11 @@ function ensure_passwordless() {
             continue
         fi
         # 此处必须走密码认证, 不能带 BatchMode(会禁掉密码认证导致 sshpass 失效)
-        if ! timeout 30 sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host" >/dev/null 2>&1; then
+        # 先自动规范化远端 .ssh 权限(旧机残留的宽松权限会被 sshd StrictModes 拒读, 公钥写入成功也认证不过)
+        timeout 30 sshpass -p "$password" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host" \
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys" || true
+        # stderr 不吞掉: 密码认证失败的真实原因(Permission denied=密码错误, timeout/refused=网络或端口)必须可见
+        if ! timeout 30 sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host"; then
             color_echo ${red} "[$user@$host] 公钥分发失败, 请检查 conf/ssh_hosts 的密码与端口"
         fi
     done
@@ -610,6 +614,42 @@ function batch_exec() {
     fi
 }
 
+# 远程分发文件: 优先 rsync(断点续传+进度, 中断后重跑只补传差量), 任一端未装 rsync 时降级 scp(补并行进度监控)
+# 注: 最小化安装的 CentOS/Debian 默认无 rsync, 不能假设目标机可用; scp 自带进度条仅在交互终端显示
+function remote_copy() {
+    local user=$1 host=$2 port=$3 local_file=$4 remote_path=$5
+    if command -v rsync >/dev/null 2>&1 \
+        && timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "command -v rsync" >/dev/null 2>&1; then
+        timeout $SSH_COPY_TIMEOUT rsync --partial --info=progress2 \
+            -e "ssh $SSH_OPTS $SSH_ALIVE_OPTS -p $port" "$local_file" "$user@$host:$remote_path"
+        return
+    fi
+    # scp 降级分支: 并行监控远端已传字节(scp 传输中写 .base.随机后缀 的临时文件), 周期回显大小与百分比
+    local local_size=$(stat -c %s "$local_file" 2>/dev/null || echo 0)
+    local remote_dir remote_base
+    case "$remote_path" in
+        */) remote_dir="${remote_path%/}"; remote_base=$(basename "$local_file") ;;
+        *)  remote_dir=$(dirname "$remote_path"); remote_base=$(basename "$remote_path") ;;
+    esac
+    (
+        while true; do
+            sleep 15
+            # set -e 下命令替换失败会杀掉本监控子 shell, 必须兜底; 临时文件查不到时查正式名(传完 rename 的瞬间)
+            sent=$(timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" \
+                "stat -c %s $remote_dir/.$remote_base* 2>/dev/null || stat -c %s $remote_dir/$remote_base 2>/dev/null" 2>/dev/null | head -1 || true)
+            if [ -n "$sent" ] && [ "$local_size" -gt 0 ]; then
+                echo "  [$user@$host] 传输进度: $((sent/1024/1024))MB/$((local_size/1024/1024))MB ($((sent*100/local_size))%)"
+            fi
+        done
+    ) &
+    local monitor_pid=$!
+    local scp_rc=0
+    timeout $SSH_COPY_TIMEOUT scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$local_file" "$user@$host:$remote_path" || scp_rc=1
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
+    return $scp_rc
+}
+
 # 单台远程分发文件(for_each_machine 回调)
 function batch_copy() {
     local user=$1 host=$2 password=$3 port=$4
@@ -619,7 +659,7 @@ function batch_copy() {
         return 1
     fi
     log "[$user@$host] 分发: $local_file -> $remote_path"
-    if timeout $SSH_COPY_TIMEOUT scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$local_file" "$user@$host:$remote_path"; then
+    if remote_copy "$user" "$host" "$port" "$local_file" "$remote_path"; then
         log "[$user@$host] 分发成功"
     else
         color_echo ${red} "[$user@$host] 分发失败"
