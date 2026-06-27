@@ -4,13 +4,16 @@ source ./variables.sh
 # cancel centos alias
 [[ -f /etc/redhat-release ]] && unalias -a
 
+# 本机主机名: 群控场景下本地与远程(slave 流式回显)日志混合输出, 每行日志标注来源机器
+LOCAL_HOSTNAME=$(hostname)
+
 action=$1
 set -e  # 如果任何命令失败，退出脚本
 trap 'echo "An error occurred. Exiting."; exit 1;' ERR
 
 function log() {
     # 时间戳实时生成(若在 source 时求值会固定为脚本启动时刻, 长流程日志无法判断实际耗时)
-    message="[$COMMON_NAME Log]: $(date +'%Y-%m-%d %H:%M:%S') - $1 "
+    message="[$COMMON_NAME Log@$LOCAL_HOSTNAME]: $(date +'%Y-%m-%d %H:%M:%S') - $1 "
     echo -e "\033[32m## ${message} \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
 }
 
@@ -20,7 +23,7 @@ function color_title() {
 
 function color_echo() {
   # 输出带颜色的文本，并同时记录到日志文件(时间戳实时生成, 同 log)
-  message="[$COMMON_NAME Log]: $(date +'%Y-%m-%d %H:%M:%S') - $2 "
+  message="[$COMMON_NAME Log@$LOCAL_HOSTNAME]: $(date +'%Y-%m-%d %H:%M:%S') - $2 "
   echo -e "\033[$1## ${message} \033[0m\n" 2>&1 | tee -a ${TARZAN_INSTALL_LOG}
 }
 
@@ -614,17 +617,18 @@ function batch_exec() {
     fi
 }
 
-# 远程分发文件: 优先 rsync(断点续传+进度, 中断后重跑只补传差量), 任一端未装 rsync 时降级 scp(补并行进度监控)
-# 注: 最小化安装的 CentOS/Debian 默认无 rsync, 不能假设目标机可用; scp 自带进度条仅在交互终端显示
+# 远程分发文件: 优先 rsync(断点续传, 中断后重跑只补传差量), 任一端未装 rsync 时降级 scp
+# 注1: 最小化安装的 CentOS/Debian 默认无 rsync, 不能假设目标机可用
+# 注2: rsync --info=progress2 与 scp 自带进度条在脚本非交互输出下均不实时刷新(只在结束汇总一行), 统一用并行监控远端已传字节保障过程可见
 function remote_copy() {
     local user=$1 host=$2 port=$3 local_file=$4 remote_path=$5
+    # 先探测通道: 两端都有 rsync 走断点续传, 否则降级 scp
+    local use_rsync=0
     if command -v rsync >/dev/null 2>&1 \
         && timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "command -v rsync" >/dev/null 2>&1; then
-        timeout $SSH_COPY_TIMEOUT rsync --partial --info=progress2 \
-            -e "ssh $SSH_OPTS $SSH_ALIVE_OPTS -p $port" "$local_file" "$user@$host:$remote_path"
-        return
+        use_rsync=1
     fi
-    # scp 降级分支: 并行监控远端已传字节(scp 传输中写 .base.随机后缀 的临时文件), 周期回显大小与百分比
+    # 并行监控: rsync/scp 传输中远端写 .文件名.随机后缀 的临时文件, 周期回显已传字节与百分比
     local local_size=$(stat -c %s "$local_file" 2>/dev/null || echo 0)
     local remote_dir remote_base
     case "$remote_path" in
@@ -643,11 +647,38 @@ function remote_copy() {
         done
     ) &
     local monitor_pid=$!
-    local scp_rc=0
-    timeout $SSH_COPY_TIMEOUT scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$local_file" "$user@$host:$remote_path" || scp_rc=1
-    kill $monitor_pid 2>/dev/null || true
-    wait $monitor_pid 2>/dev/null || true
-    return $scp_rc
+    # 传输进程放后台由主循环轮询: 前台运行遇 ssh 会话僵死时 ^C 会卡在 socket 清理上杀不掉;
+    # 后台异步进程按 POSIX 忽略 SIGINT, 必须由 trap 显式强杀
+    if [[ "$use_rsync" == 1 ]]; then
+        # --timeout=60: IO 空闲 60s 自动断开(链路僵死时自杀, 不用等外层 600s)
+        rsync --partial --info=progress2 --timeout=60 \
+            -e "ssh $SSH_OPTS $SSH_ALIVE_OPTS -p $port" "$local_file" "$user@$host:$remote_path" &
+    else
+        scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$local_file" "$user@$host:$remote_path" &
+    fi
+    local copy_pid=$!
+    # ^C 即时响应: 强杀传输与监控进程后退出
+    trap "kill -9 $copy_pid $monitor_pid 2>/dev/null; exit 130" INT
+    local deadline=$(( $(date +%s) + SSH_COPY_TIMEOUT ))
+    local copy_rc=0
+    while kill -0 $copy_pid 2>/dev/null; do
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            copy_rc=1
+            break
+        fi
+        sleep 5
+    done
+    # 正常完成(进程已退出)先收割退出码; 超时路径进程还活着, 跳过 wait 直接强杀
+    if [ "$copy_rc" -eq 0 ]; then
+        wait $copy_pid 2>/dev/null || copy_rc=1
+    fi
+    # 先 disown 再杀: 避免 bash 打印进程终止报告(Terminated/Killed)刷屏
+    disown $copy_pid 2>/dev/null || true
+    kill -9 $copy_pid 2>/dev/null || true
+    trap - INT
+    disown $monitor_pid 2>/dev/null || true
+    kill -9 $monitor_pid 2>/dev/null || true
+    return $copy_rc
 }
 
 # 单台远程分发文件(for_each_machine 回调)

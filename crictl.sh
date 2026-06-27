@@ -35,6 +35,17 @@ function online_pull_kube_base_images() {
     return 0 # 先返回OK、不做下面操作
   fi
 
+  # slave 节点只运行 kube-proxy 与 pause, apiserver/etcd/coredns 等 master 组件镜像不拉(省流量省时间)
+  if [[ "$IS_MASTER" != 1 ]]; then
+    local -a node_images=()
+    for image in "${images[@]}"; do
+      case "$image" in
+        kube-proxy:* | pause:*) node_images+=("$image") ;;
+      esac
+    done
+    images=("${node_images[@]}")
+  fi
+
   # 下载所有镜像
   pull_images "${images[@]}"
 }
@@ -72,6 +83,7 @@ function main_entrance() {
   online_pull_kube_base_images)
     KUBE_VERSION=$2
     GLOBAL_IMAGE_REPOSITORY=$3
+    IS_MASTER=${4:-1}
     log "Online Downloading images required 
         K8s Version $KUBE_VERSION
         Image Repository $GLOBAL_IMAGE_REPOSITORY

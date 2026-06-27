@@ -210,15 +210,12 @@ function update_ipvs_conf() {
   run_command "modprobe ip_vs_wrr"
   run_command "modprobe ip_vs_sh"
   run_command "modprobe nf_conntrack"
-  # 根据内核版本判断是否加载 nf_conntrack_ipv4
+  # br_netfilter 无条件加载: bridge-nf-call-* 系列 sysctl 依赖该模块, 与内核版本无关
+  # (不加载则 /proc/sys/net/bridge/ 不存在, update_kubernetes_conf 的 sysctl -p 直接报错终止安装)
+  run_command "modprobe br_netfilter"
+  # nf_conntrack_ipv4 在高版本内核已并入 nf_conntrack, 仅 <= 4.12 内核单独加载
   if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
-      # 仅在内核版本 <= 4.12 时加载模块
-      color_echo ${fuchsia} "配置 nf_conntrack_ipv4  br_netfilter "
-      echo "modprobe -- nf_conntrack_ipv4"
-      echo "modprobe -- br_netfilter"
-  else
-      # 原因：linux > 4.12内核版本不兼容
-      color_echo ${fuchsia} "跳过 modprobe nf_conntrack_ipv4 和 br_netfilter 配置"
+      run_command "modprobe nf_conntrack_ipv4"
   fi
   run_command "modprobe overlay"
 }
@@ -236,13 +233,11 @@ nf_conntrack
 overlay
 EOF
 
+  # br_netfilter 无条件写入开机自动加载(bridge-nf-call-* sysctl 依赖, 与内核版本无关)
+  echo "br_netfilter" >> "$KUBERNETES_MODULES_CONF"
+  # nf_conntrack_ipv4 在高版本内核已并入 nf_conntrack, 仅 <= 4.12 内核写入
   if [[ $MAJOR_KERNEL_VERSION -lt 4 ]] || { [[ $MAJOR_KERNEL_VERSION -eq 4 ]] && [[ $MINOR_KERNEL_VERSION -le 12 ]]; }; then
-    color_echo ${fuchsia} "配置 nf_conntrack_ipv4 "
     echo "nf_conntrack_ipv4" >> "$KUBERNETES_MODULES_CONF"
-    echo "br_netfilter" >> "$KUBERNETES_MODULES_CONF"
-  else
-    # 原因：linux>4.12内核版本不兼容
-    color_echo ${fuchsia} "跳过 modprobe nf_conntrack_ipv4 配置"
   fi
 
   run_command "systemctl enable systemd-modules-load"

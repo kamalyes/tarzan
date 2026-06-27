@@ -66,20 +66,19 @@ function load_images {
     log "Listing images for Kubernetes version $KUBE_VERSION..."
     kubeadm config images list --image-repository "$GLOBAL_IMAGE_REPOSITORY"
 
-    # 定义不需要在线拉取的策略
-    local -a offline_policies=("IfNotPresent" "Never")
-    local load_command="online_pull_kube_base_images"  # 默认使用在线拉取
+    # 默认在线拉取; 仅当策略允许离线(IfNotPresent/Never)且离线镜像目录真实存在时才走离线导入
+    # (slave 安装包按最小化组装不携带 crictl-images, 若无此兜底会: 跳过导入 -> crictl images 校验失败 -> 安装中断)
+    local load_command="online_pull_kube_base_images"
+    if [[ "$OFFLINE_SUPPORTED" == 1 ]] && [ -d "$CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION" ]; then
+        case "$KUBE_IMAGE_PULL_POLICY" in
+            IfNotPresent | Never)
+                load_command="offline_load_kube_base_images"
+                ;;
+        esac
+    fi
 
-    # 检查 KUBE_IMAGE_PULL_POLICY 是否在不需要在线拉取的策略中(仅离线支持的系统才有离线镜像可导入)
-    for policy in "${offline_policies[@]}"; do
-        if [[ "$policy" == "$KUBE_IMAGE_PULL_POLICY" && "$OFFLINE_SUPPORTED" == 1 ]]; then
-            load_command="offline_load_kube_base_images"
-            break
-        fi
-    done
-
-    # 执行加载镜像的命令, 列出所有镜像并过滤出指定的镜像仓库
-    run_command "/bin/bash crictl.sh $load_command $KUBE_VERSION $GLOBAL_IMAGE_REPOSITORY" && \
+    # 执行加载镜像的命令(附 IS_MASTER 供 crictl.sh 按节点角色过滤镜像), 列出所有镜像并过滤出指定的镜像仓库
+    run_command "/bin/bash crictl.sh $load_command $KUBE_VERSION $GLOBAL_IMAGE_REPOSITORY $IS_MASTER" && \
     run_command "crictl images | grep $GLOBAL_IMAGE_REPOSITORY"
 }
 

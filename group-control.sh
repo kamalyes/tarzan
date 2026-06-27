@@ -46,35 +46,36 @@ function slave_install() {
     log "[$user@$host] 安装包分发完成(耗时 $((cost/60))分$((cost%60))秒)"
     # 拆两步回显: 解压在目标机执行且无输出(吃目标机 CPU/磁盘, 与 master 无关), 与 install-kube.sh 阶段分开才能定位等待点
     log "[$user@$host] 远程解压安装包(${pkg_size}, 解压在目标机执行, 每 15 秒探测远端 tar 进程)"
-    # 并行监控: 直接查远端 tar 进程判活(比大小稳定更直接), 进程消失即解压结束
-    (
-        while true; do
-            sleep 15
-            # set -e 下命令替换失败会杀掉本监控子 shell, 必须兜底
-            # pgrep 模式用 [t]ar 规避自匹配(远端 shell 的命令行本身含 tar -xzf 字样)
-            state=$(timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" \
-                "if pgrep -f '[t]ar -xzf.*${NODE_PACKAGE_PATH}' >/dev/null 2>&1; then du -sh ~/${NODE_PACKAGE_PATH} 2>/dev/null; else echo __DONE__; fi" 2>/dev/null || true)
-            case "$state" in
-                __DONE__)
-                    echo "  [$user@$host] 远端解压进程已结束(若久无后续输出为 ssh 会话僵死, 可 Ctrl+C 后重跑, 幂等)"
-                    break
-                    ;;
-                "") : ;;
-                *) echo "  [$user@$host] 解压中, 已写入: ${state}" ;;
-            esac
-        done
-    ) &
-    local monitor_pid=$!
-    # 解压是短时 IO 操作, 单独收紧超时(默认 300s, 不复用 3600s 的安装级超时), 失败时提示重跑可跳过
-    timeout 300 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-        "tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~" || {
-        # set -e 下 kill/wait 失败(进程已退出)会误杀主脚本, 必须兜底
-        kill $monitor_pid 2>/dev/null || true
-        color_echo ${red} "[$user@$host] 安装包解压失败, 重跑 install-slaves 即可(已传文件不重传, 解压幂等覆盖)"
+    # 后台发起 + 主循环轮询进程判活: 前台 ssh 会话在部分云环境僵死(远端命令完成后会话不返回, 已复现多次),
+    # nohup 让 tar 脱离会话独立运行, 轮询每轮都是新短会话, 彻底绕开僵死; ^C 也随主循环即时响应
+    timeout 30 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "nohup tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~ >/dev/null 2>&1 &" || {
+        color_echo ${red} "[$user@$host] 解压命令发起失败, 重跑 install-slaves 即可(已传文件不重传, 解压幂等覆盖)"
         return 1
     }
-    kill $monitor_pid 2>/dev/null || true
-    wait $monitor_pid 2>/dev/null || true
+    local extract_deadline=$(( $(date +%s) + 300 ))
+    while true; do
+        sleep 15
+        # pgrep 模式用 [t]ar 规避自匹配(远端 shell 的命令行本身含 tar -xzf 字样)
+        state=$(timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" \
+            "if pgrep -f '[t]ar -xzf.*${NODE_PACKAGE_PATH}' >/dev/null 2>&1; then du -sh ~/${NODE_PACKAGE_PATH} 2>/dev/null; else echo __DONE__; fi" 2>/dev/null || true)
+        case "$state" in
+            __DONE__)
+                # 进程消失后校验解压产物(tar 异常退出进程同样会消失, 不能只看进程判活)
+                if timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "test -f ~/$NODE_PACKAGE_PATH/install-kube.sh" 2>/dev/null; then
+                    break
+                fi
+                color_echo ${red} "[$user@$host] 安装包解压失败, 重跑 install-slaves 即可(已传文件不重传, 解压幂等覆盖)"
+                return 1
+                ;;
+            "") : ;;
+            *) echo "  [$user@$host] 解压中, 已写入: ${state}" ;;
+        esac
+        if [ "$(date +%s)" -ge "$extract_deadline" ]; then
+            color_echo ${red} "[$user@$host] 解压超时(300s), 重跑 install-slaves 即可(解压幂等覆盖)"
+            return 1
+        fi
+    done
     log "[$user@$host] 安装包解压完成"
     log "[$user@$host] 远程执行 install-kube.sh --join(安装日志将流式回显)"
     timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
