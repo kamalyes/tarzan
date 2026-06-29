@@ -237,6 +237,16 @@ function sub_slave_rely(){
     cp *.sh "$NODE_PACKAGE_PATH"
     # kubectl 凭证不打包(master 的 admin.conf 是敏感凭证), slave 加入集群后由 group-control.sh install-slaves 统一分发到 ~/.kube/config
     tar -czPf $NODE_PACKAGE_PATH.tar.gz $NODE_PACKAGE_PATH
+    # 节点间端口放行提示(云安全组未放行时 slave 加入后将持续 NotReady, 提前告知避免事后排查)
+    log "请在云厂商安全组放行节点间端口(源建议设为 VPC 内网网段):"
+    echo "  - TCP 6443                 Kubernetes API(slave -> master)"
+    echo "  - TCP 10250                kubelet API(节点互访)"
+    if [[ $KUBE_NETWORK == "flannel" ]]; then
+        echo "  - UDP 8472                 flannel VXLAN(节点间 Pod 网络)"
+    elif [[ $KUBE_NETWORK == "calico" ]]; then
+        echo "  - TCP 179                  calico BGP(节点间 Pod 路由)"
+    fi
+    echo "  - TCP/UDP 30000-32767      NodePort(业务需要时)"
     log "组装完成, 在 master 执行 ./group-control.sh install-slaves 一键分发安装(或手动 scp 至slave节点)"
 }
 

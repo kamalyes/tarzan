@@ -29,6 +29,16 @@ function slave_install() {
         log "[$user@$host] 已加入集群, 跳过(如需重新加入请先在该机执行 clean-residue.sh 清理残留)"
         return 0
     fi
+    # 端口预检: 在分发前探测 slave -> master API 可达性, 提前暴露安全组问题
+    # (masterip 为 ip:port 原样传递, 拆解端口; 无端口时 kubeadm 默认 6443)
+    local api_host="${masterip%%:*}" api_port="${masterip##*:}"
+    [[ "$api_port" == "$api_host" ]] && api_port="6443"
+    if ! timeout 20 ssh $SSH_OPTS -p "$port" "$user@$host" \
+        "timeout 5 bash -c '</dev/tcp/$api_host/$api_port' >/dev/null 2>&1" 2>/dev/null; then
+        color_echo ${red} "[$user@$host] 无法访问 master API($api_host:$api_port), 请在安全组放行后重跑(TCP $api_port, 源: 该节点内网IP)"
+        return 1
+    fi
+    log "[$user@$host] master API($api_host:$api_port) 可达"
     # 包存在性按需检查: 只有待安装(fresh)机器需要安装包, 已加入机器在包缺失时也应正常跳过
     if [ ! -f "$package" ]; then
         color_echo ${red} "未找到 $package, 请先在 master 执行 install-kube.sh 生成 slave 安装包"
@@ -77,9 +87,11 @@ function slave_install() {
         fi
     done
     log "[$user@$host] 安装包解压完成"
-    log "[$user@$host] 远程执行 install-kube.sh --join(安装日志将流式回显)"
+    # node name 取 hostname, 云厂商默认名(VM-x-x-centos)不可读, 统一设为 k8s-node-<IP末段>(唯一且重跑稳定)
+    local node_name="k8s-node-$(echo "$host" | awk -F. '{print $4}')"
+    log "[$user@$host] 远程执行 install-kube.sh --join(节点名 $node_name, 安装日志将流式回显)"
     timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
+        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y -hname $node_name --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
         color_echo ${red} "[$user@$host] slave 安装失败"
         return 1
     }
