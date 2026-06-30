@@ -18,7 +18,7 @@ function slave_install() {
         [ -f /etc/kubernetes/kubelet.conf ] && node_state="joined"
         [ -f /etc/kubernetes/admin.conf ] && node_state="master"
     else
-        node_state=$(timeout 30 ssh $SSH_OPTS -p "$port" "$user@$host" \
+        node_state=$(timeout -k 5 30 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
             'if [ -f /etc/kubernetes/admin.conf ]; then echo master; elif [ -f /etc/kubernetes/kubelet.conf ]; then echo joined; else echo fresh; fi' 2>/dev/null) || node_state=""
     fi
     if [[ "$node_state" == "master" ]]; then
@@ -33,7 +33,7 @@ function slave_install() {
     # (masterip 为 ip:port 原样传递, 拆解端口; 无端口时 kubeadm 默认 6443)
     local api_host="${masterip%%:*}" api_port="${masterip##*:}"
     [[ "$api_port" == "$api_host" ]] && api_port="6443"
-    if ! timeout 20 ssh $SSH_OPTS -p "$port" "$user@$host" \
+    if ! timeout -k 5 20 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
         "timeout 5 bash -c '</dev/tcp/$api_host/$api_port' >/dev/null 2>&1" 2>/dev/null; then
         color_echo ${red} "[$user@$host] 无法访问 master API($api_host:$api_port), 请在安全组放行后重跑(TCP $api_port, 源: 该节点内网IP)"
         return 1
@@ -55,30 +55,33 @@ function slave_install() {
     local cost=$(( $(date +%s) - start_ts ))
     log "[$user@$host] 安装包分发完成(耗时 $((cost/60))分$((cost%60))秒)"
     # 拆两步回显: 解压在目标机执行且无输出(吃目标机 CPU/磁盘, 与 master 无关), 与 install-kube.sh 阶段分开才能定位等待点
-    log "[$user@$host] 远程解压安装包(${pkg_size}, 解压在目标机执行, 每 15 秒探测远端 tar 进程)"
+    log "[$user@$host] 远程解压安装包(${pkg_size}, 解压在目标机执行, 每 3 秒探测远端 tar 进程)"
     # 后台发起 + 主循环轮询进程判活: 前台 ssh 会话在部分云环境僵死(远端命令完成后会话不返回, 已复现多次),
     # nohup 让 tar 脱离会话独立运行, 轮询每轮都是新短会话, 彻底绕开僵死; ^C 也随主循环即时响应
-    timeout 30 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-        "nohup tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~ >/dev/null 2>&1 &" || {
+    # timeout -k 5: 僵死会话阻塞在 socket 读取时 SIGTERM 不可达, timeout 只发信号不等退出, 必须补刀 SIGKILL 才能保证返回
+    # </dev/null: 后台 tar 若继承会话 stdin, sshd 因管道未全关而等不到会话结束, 发起命令也随之僵死
+    timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "nohup tar -xzf ~/${NODE_PACKAGE_PATH}.tar.gz -C ~ </dev/null >/dev/null 2>&1 &" || {
         color_echo ${red} "[$user@$host] 解压命令发起失败, 重跑 install-slaves 即可(已传文件不重传, 解压幂等覆盖)"
         return 1
     }
+    log "[$user@$host] 解压命令已发起(目标机后台运行), 开始轮询探测"
     local extract_deadline=$(( $(date +%s) + 300 ))
     while true; do
-        sleep 15
+        sleep 3
         # pgrep 模式用 [t]ar 规避自匹配(远端 shell 的命令行本身含 tar -xzf 字样)
-        state=$(timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" \
+        state=$(timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
             "if pgrep -f '[t]ar -xzf.*${NODE_PACKAGE_PATH}' >/dev/null 2>&1; then du -sh ~/${NODE_PACKAGE_PATH} 2>/dev/null; else echo __DONE__; fi" 2>/dev/null || true)
         case "$state" in
             __DONE__)
                 # 进程消失后校验解压产物(tar 异常退出进程同样会消失, 不能只看进程判活)
-                if timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "test -f ~/$NODE_PACKAGE_PATH/install-kube.sh" 2>/dev/null; then
+                if timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "test -f ~/$NODE_PACKAGE_PATH/install-kube.sh" 2>/dev/null; then
                     break
                 fi
                 color_echo ${red} "[$user@$host] 安装包解压失败, 重跑 install-slaves 即可(已传文件不重传, 解压幂等覆盖)"
                 return 1
                 ;;
-            "") : ;;
+            "") echo "  [$user@$host] 探测会话无响应(链路抖动), 持续重试中..." ;;
             *) echo "  [$user@$host] 解压中, 已写入: ${state}" ;;
         esac
         if [ "$(date +%s)" -ge "$extract_deadline" ]; then
@@ -87,18 +90,25 @@ function slave_install() {
         fi
     done
     log "[$user@$host] 安装包解压完成"
-    # node name 取 hostname, 云厂商默认名(VM-x-x-centos)不可读, 统一设为 k8s-node-<IP末段>(唯一且重跑稳定)
-    local node_name="k8s-node-$(echo "$host" | awk -F. '{print $4}')"
-    log "[$user@$host] 远程执行 install-kube.sh --join(节点名 $node_name, 安装日志将流式回显)"
-    timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y -hname $node_name --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
+    # node name 直接取 conf/ssh_hosts 第5列的规划主机名(单一清单: 连接信息与主机名规划同文件, conf/hosts 由其派生)
+    local node_name=$(awk -F: -v ip="$host" '{sub(/#.*/,"")} $2==ip && $5!="" {print $5; exit}' "$TARGET_FILE" 2>/dev/null)
+    local hname_args=""
+    if [[ -n "$node_name" ]]; then
+        hname_args="-hname $node_name"
+        log "[$user@$host] 远程执行 install-kube.sh --join(节点名 $node_name 取自 conf/ssh_hosts, 安装日志将流式回显)"
+    else
+        color_echo ${yellow} "[$user@$host] conf/ssh_hosts 未配置 $host 的主机名(第5列), 以机器默认主机名加入集群(建议补充后重跑)"
+        log "[$user@$host] 远程执行 install-kube.sh --join(默认主机名, 安装日志将流式回显)"
+    fi
+    timeout -k 5 $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y $hname_args --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
         color_echo ${red} "[$user@$host] slave 安装失败"
         return 1
     }
     log "[$user@$host] slave 安装完成"
     # 分发 master 的 admin.conf 作为 slave 的 kubectl 凭证(增强体验, 失败不阻塞节点加入)
     log "[$user@$host] 分发 kubectl 凭证(支持在该机使用 kubectl 管理集群)"
-    timeout 60 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+    timeout -k 5 60 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
         "mkdir -p ~/.kube && cat > ~/.kube/config && chmod 600 ~/.kube/config" < "$KUBE_ADMIN_CONFIG_FILE" \
         || color_echo ${yellow} "[$user@$host] kubectl 凭证分发失败(不影响集群加入, 可手动拷贝 master 的 $KUBE_ADMIN_CONFIG_FILE 到该机 ~/.kube/config)"
     log "[$user@$host] 全部完成"

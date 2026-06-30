@@ -514,7 +514,7 @@ EOF
 }
 
 # --- SSH 群控通用能力(基于 conf/ssh_hosts, group-control.sh 与 setup-ssh-keys.sh 共用) ---
-# conf/ssh_hosts 格式: user:host:password[:port] 每行一台, # 之后内容视为注释
+# conf/ssh_hosts 格式: user:host:password[:port][:hostname] 每行一台, 第5列主机名供节点命名与派生 conf/hosts, # 之后内容视为注释
 # 连接统一走密钥免密, 密码仅用于首次公钥分发(ensure_passwordless)
 
 # conf/ssh_hosts 存在性校验(群控入口统一调用, 缺失即终止)
@@ -523,6 +523,13 @@ function require_hosts_file() {
         color_echo ${red} "配置文件 $TARGET_FILE 不存在, 请创建(格式 user:host:password[:port] 每行一台)"
         exit 1
     fi
+}
+
+# 从 conf/ssh_hosts 派生 conf/hosts(用户只维护一份清单: 连接信息与主机名规划都在 ssh_hosts)
+# 仅取 IP(第2列)与规划主机名(第5列), 密码等连接信息绝不写入 /etc/hosts; 无主机名列的行跳过
+function refresh_hosts_file() {
+    [ -f "$TARGET_FILE" ] || return 0
+    awk -F: '{sub(/#.*/,"")} NF>=5 && $5!="" {print $2, $5}' "$TARGET_FILE" > conf/hosts
 }
 
 # 解析 conf/ssh_hosts 为 "user host password port" 行(剥离注释与空行, 端口缺省补默认值)
@@ -585,7 +592,7 @@ function ensure_passwordless() {
         if is_local_host "$host"; then
             continue
         fi
-        if timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "exit" >/dev/null 2>&1; then
+        if timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "exit" >/dev/null 2>&1; then
             continue
         fi
         log "[$user@$host] SSH 免密未建立, 自动分发公钥"
@@ -595,10 +602,10 @@ function ensure_passwordless() {
         fi
         # 此处必须走密码认证, 不能带 BatchMode(会禁掉密码认证导致 sshpass 失效)
         # 先自动规范化远端 .ssh 权限(旧机残留的宽松权限会被 sshd StrictModes 拒读, 公钥写入成功也认证不过)
-        timeout 30 sshpass -p "$password" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host" \
+        timeout -k 5 30 sshpass -p "$password" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host" \
             "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys" || true
         # stderr 不吞掉: 密码认证失败的真实原因(Permission denied=密码错误, timeout/refused=网络或端口)必须可见
-        if ! timeout 30 sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host"; then
+        if ! timeout -k 5 30 sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host"; then
             color_echo ${red} "[$user@$host] 公钥分发失败, 请检查 conf/ssh_hosts 的密码与端口"
         fi
     done
@@ -609,7 +616,7 @@ function batch_exec() {
     local user=$1 host=$2 password=$3 port=$4
     local command="$5"
     log "[$user@$host] 执行: $command"
-    if timeout $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "$command"; then
+    if timeout -k 5 $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "$command"; then
         log "[$user@$host] 执行成功"
     else
         color_echo ${red} "[$user@$host] 执行失败"
@@ -625,7 +632,7 @@ function remote_copy() {
     # 先探测通道: 两端都有 rsync 走断点续传, 否则降级 scp
     local use_rsync=0
     if command -v rsync >/dev/null 2>&1 \
-        && timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" "command -v rsync" >/dev/null 2>&1; then
+        && timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "command -v rsync" >/dev/null 2>&1; then
         use_rsync=1
     fi
     # 并行监控: rsync/scp 传输中远端写 .文件名.随机后缀 的临时文件, 周期回显已传字节与百分比
@@ -639,7 +646,7 @@ function remote_copy() {
         while true; do
             sleep 15
             # set -e 下命令替换失败会杀掉本监控子 shell, 必须兜底; 临时文件查不到时查正式名(传完 rename 的瞬间)
-            sent=$(timeout 15 ssh $SSH_OPTS -p "$port" "$user@$host" \
+            sent=$(timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
                 "stat -c %s $remote_dir/.$remote_base* 2>/dev/null || stat -c %s $remote_dir/$remote_base 2>/dev/null" 2>/dev/null | head -1 || true)
             if [ -n "$sent" ] && [ "$local_size" -gt 0 ]; then
                 echo "  [$user@$host] 传输进度: $((sent/1024/1024))MB/$((local_size/1024/1024))MB ($((sent*100/local_size))%)"

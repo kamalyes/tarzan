@@ -40,7 +40,8 @@ function prepare_work() {
 
 function upload_hosts {
     local update_host_prompt="Updating hosts file"
-    # echo "$KUBE_ADVERTISE_ADDRESS k8s-master" >>/etc/hosts
+    # conf/hosts 由 conf/ssh_hosts 派生(单一清单维护), master 侧每次执行刷新; slave 侧无 ssh_hosts 时用包内副本
+    refresh_hosts_file
 
     # 检查 conf/hosts 文件是否存在
     if [ -f "conf/hosts" ]; then
@@ -225,7 +226,11 @@ function sub_slave_rely(){
     log "开始组装slave安装包"
     rm -rf $NODE_PACKAGE_PATH
     mkdir -p $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
-    cp -R conf/ $NODE_PACKAGE_PATH/conf
+    # 刷新派生的 conf/hosts(用户可能刚调整过 ssh_hosts 的主机名规划, 包内副本取最新)
+    refresh_hosts_file
+    # 只携带派生出的纯净 conf/hosts(供 slave 同步 /etc/hosts), 带密码的 conf/ssh_hosts 绝不进分发包
+    mkdir -p $NODE_PACKAGE_PATH/conf
+    cp conf/hosts $NODE_PACKAGE_PATH/conf/ 2>/dev/null || true
     # 仅 CentOS 7 离线模式需要分发 RPM 依赖, 在线模式 slave 自行在线安装, 减小分发包体积
     if [[ $OFFLINE_SUPPORTED == 1 ]]; then
         # 复制指定的目录到 $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH

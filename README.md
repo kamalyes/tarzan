@@ -31,14 +31,14 @@ graph TB
 
 ```mermaid
 flowchart TD
-    A["① 前置准备（master）<br/>conf/hosts 填集群机器清单<br/>conf/ssh_hosts 填 slave 清单<br/>免密由群控自动建立"] --> B["② 安装 Master（master）<br/>sh install-kube.sh --flannel --hostname k8s-master"]
+    A["① 前置准备（master）<br/>conf/ssh_hosts 一份清单搞定连接信息与主机名规划<br/>免密由群控自动建立"] --> B["② 安装 Master（master）<br/>sh install-kube.sh --flannel --hostname k8s-master"]
     B --> B1["系统初始化 · containerd · kubeadm init"]
     B1 --> B2["自动安装 CNI（--flannel / --calico 二选一）<br/>可选 Ingress（--traefik / --ingress-nginx 二选一）"]
-    B2 --> B3["生成 kube_slave.tar.gz<br/>并打印 kubeadm join 命令"]
+    B2 --> B3["生成 kube_slave.tar.gz<br/>打印 join 命令并提示安全组放行端口"]
     B3 --> C["③ 一键安装所有 Slave（master）<br/>./group-control.sh install-slaves"]
     C --> C1["kubeadm token create 动态生成 join 凭据"]
-    C1 --> C2["scp 分发安装包到每台 slave"]
-    C2 --> C3["远程执行 install-kube.sh --join"]
+    C1 --> C2["预检 master API 可达性<br/>rsync/scp 分发安装包(断点续传+进度回显)"]
+    C2 --> C3["远程解压(进度监控)并执行 install-kube.sh --join<br/>节点名自动 k8s-node-<IP末段>"]
     C3 --> D["④ 验证（master）<br/>kubectl get nodes 全部 Ready"]
     D --> E{"后续新增 Slave？"}
     E -- "清单追加新机器<br/>重跑 install-slaves" --> C
@@ -119,24 +119,18 @@ CentOS Linux release 7.9.209 (Core)
 ```bash
 # 所有操作必须在项目根目录(上一步解压出的目录)下执行
 
-# 1. 配置集群机器清单 conf/hosts（有几台填几台, master + 所有 slave）
-[root@k8s-master tarzan]# bash -c 'cat << EOF >> conf/hosts
-10.0.0.3 k8s-master
-10.0.0.8 k8s-node1
-10.0.0.9 k8s-node2
-10.0.0.10 k8s-node3
-EOF'
-# 安装时脚本会把 conf/hosts 同步到所有机器的 /etc/hosts
-
-# 2. 配置受管机器清单 conf/ssh_hosts, 格式 user:host:password[:port] 每行一台
+# 1. 配置集群清单 conf/ssh_hosts（唯一需要手工维护的清单, 有几台填几台, 含 master）
+#    格式 user:host:password[:port][:hostname] 每行一台, 第5列为主机名规划
+#    (节点名取自该列, conf/hosts 由脚本自动派生并同步到所有机器的 /etc/hosts, 无需手工维护)
 #    行首 # 或行内 # 之后的内容都会被忽略（新增/剔除节点就靠注释）
 [root@k8s-master tarzan]# bash -c 'cat << EOF >> conf/ssh_hosts
-root:10.0.0.8:2235678:22
-root:10.0.0.9:3235678:22
-root:10.0.0.10:3235678:2222  # 注意使用非标准端口
+root:10.0.0.3:2235678:22:k8s-master
+root:10.0.0.8:2235678:22:k8s-node1
+root:10.0.0.9:3235678:22:k8s-node2
+root:10.0.0.10:3235678:2222:k8s-node3  # 注意使用非标准端口
 EOF'
 
-# 3. 免密无需手动建立: 群控命令(exec/copy/install-slaves)首次执行时自动生成本机密钥
+# 2. 免密无需手动建立: 群控命令(exec/copy/install-slaves)首次执行时自动生成本机密钥
 #    并对未免密的机器分发公钥, conf/ssh_hosts 里的密码仅用于这一次分发, 之后全走密钥免密
 #    (首次分发依赖 sshpass: CentOS 7 离线包已自带 rpm, 在线环境 yum install -y sshpass)
 ```
@@ -177,9 +171,9 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 [root@k8s-master tarzan]# ./group-control.sh install-slaves
 ```
 
-脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 逐台分发 `kube_slave.tar.gz` → 远程解压并执行 `install-kube.sh --join`
+脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 分发前从 slave 侧预检 master API（6443）可达性，安全组问题提前暴露 → 逐台分发 `kube_slave.tar.gz`（优先 rsync 断点续传，中断重跑只补差量；传输与解压均有 15 秒粒度进度回显）→ 远程解压并执行 `install-kube.sh --join`（节点名自动设为 `k8s-node-<IP末段>`，与 k8s-master 风格统一）→ 分发 kubectl 凭证到 node 的 `~/.kube/config`（加入后直接可在 node 上使用 kubectl）
 
-注意：`install-slaves` 会**自动跳过**清单里的 master 与已加入集群的节点（按 `/etc/kubernetes/kubelet.conf` 判断），清单无需注释已装机器；某台安装失败会明确报错且不影响其余机器继续安装，全部装完后整体退出码非 0
+注意：`install-slaves` 会**自动跳过**清单里的 master 与已加入集群的节点（按 `/etc/kubernetes/kubelet.conf` 判断），清单无需注释已装机器；某台安装失败会明确报错且不影响其余机器继续安装，全部装完后整体退出码非 0；`kube_slave.tar.gz` 被清理后可先执行 `sh install-kube.sh --pack-slave` 补包（master 已就绪时不重跑安装流程）
 
 ## 方式二: 手工方式
 
@@ -194,7 +188,7 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 [root@k8s-node1 tarzan]# sh install-kube.sh -y --join -addr 114.132.233.16 --create-virtualeth --masterip 115.233.233.15:6443 --token xxx --discovery-token-ca-cert-hash xxxx
 ```
 
-slave 安装包自带 admin config 并自动配置 KUBECONFIG，加入后直接可在 node 上使用 kubectl：
+slave 安装包不携带 master 的 admin.conf（敏感凭证不随包流转），手工方式加入后如需在 node 上使用 kubectl，将 master 的 `/etc/kubernetes/admin.conf` 拷贝到该机 `~/.kube/config`（权限 600）即可；群控方式（方式一）安装完成后自动分发，无需手动操作
 
 ```bash
 [root@k8s-node1 tarzan]# kubectl get nodes
@@ -216,9 +210,8 @@ k8s-node3    Ready    <none>                 10m   v1.23.3   10.0.0.10         <
 集群运行后随时扩容，依旧全程在 master 上操作：
 
 ```bash
-# 1. 追加新机器到两个清单(conf/hosts 是全集群主机名解析清单, conf/ssh_hosts 加新机器的连接凭据)
-[root@k8s-master tarzan]# echo "10.0.0.11 k8s-node4" >> conf/hosts
-[root@k8s-master tarzan]# echo "root:10.0.0.11:4235678:22" >> conf/ssh_hosts
+# 1. 追加新机器到 conf/ssh_hosts(带主机名第5列, conf/hosts 自动派生无需维护)
+[root@k8s-master tarzan]# echo "root:10.0.0.11:4235678:22:k8s-node4" >> conf/ssh_hosts
 
 # 2. 一键安装(与初次安装完全相同的命令, 新机器免密自动建立, 已在集群的机器自动跳过)
 [root@k8s-master tarzan]# ./group-control.sh install-slaves
@@ -316,7 +309,7 @@ replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 [root@k8s-master tarzan]# ./group-control.sh hosts                        # 查看目标机器清单
 [root@k8s-master tarzan]# ./group-control.sh exec "kubectl get nodes"    # 批量执行命令
 [root@k8s-master tarzan]# ./group-control.sh copy kube_slave.tar.gz ~/    # 批量分发文件
-[root@k8s-master tarzan]# ./group-control.sh install-slaves               # 一键安装清单内所有 slave
+[root@k8s-master tarzan]# ./group-control.sh install-slaves               # 一键安装清单内所有 slave(预检/断点续传/进度回显/凭证分发)
 ```
 
 # 二次开发
@@ -374,6 +367,7 @@ Options:
    --pod-subnet                                default=172.22.0.0/16
    --serviceSubnet                             default=10.96.0.0/12
    --join                                      join the Kubernetes cluster
+   --pack-slave                                rebuild the slave install package only (for master already installed)
    --masterip                                  master node IP address
    --discovery-token-ca-cert-hash              discovery token CA cert hash
    -create-vreth|--create-virtualeth           default=false
@@ -381,4 +375,5 @@ Options:
    Master: sh install-kube.sh -v v1.23.3 -addr 10.0.8.3 --flannel
    Slave:  sh install-kube.sh
    Slave Join:  sh install-kube.sh --join --masterip xxxx --token xxx --discovery-token-ca-cert-hash xxxx
+   Rebuild Slave Package:  sh install-kube.sh --pack-slave
 ```
