@@ -10,23 +10,20 @@ action=$1
 function slave_install() {
     local user=$1 host=$2 password=$3 port=$4
     local package=$5 masterip=$6 token=$7 hash=$8
-    # 幂等预检: master(有 admin.conf)与已加入节点(有 kubelet.conf)自动跳过, 重复执行只装新机器
+    # 幂等预检(探测逻辑在 common.sh probe_node_state): master 与已加入节点自动跳过,
+    # half_joined(机器有残留但集群无记录)不能跳过, 否则该机器永久卡在清单里
     local node_state
-    if is_local_host "$host"; then
-        # 本机不发起 SSH, 直接本地检测
-        node_state="fresh"
-        [ -f /etc/kubernetes/kubelet.conf ] && node_state="joined"
-        [ -f /etc/kubernetes/admin.conf ] && node_state="master"
-    else
-        node_state=$(timeout -k 5 30 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-            'if [ -f /etc/kubernetes/admin.conf ]; then echo master; elif [ -f /etc/kubernetes/kubelet.conf ]; then echo joined; else echo fresh; fi' 2>/dev/null) || node_state=""
-    fi
+    node_state=$(probe_node_state "$user" "$host" "$port")
     if [[ "$node_state" == "master" ]]; then
         log "[$user@$host] 是 master 节点, 无需加入, 跳过"
         return 0
     fi
+    if [[ "$node_state" == "half_joined" ]]; then
+        color_echo ${yellow} "[$user@$host] 机器有安装残留但集群无此节点(节点被删或加入中断), 请先执行 ./group-control.sh remove-slave $host 清理后重跑"
+        return 1
+    fi
     if [[ "$node_state" == "joined" ]]; then
-        log "[$user@$host] 已加入集群, 跳过(如需重新加入请先在该机执行 clean-residue.sh 清理残留)"
+        log "[$user@$host] 已加入集群, 跳过(如需重新加入请先执行 ./group-control.sh remove-slave $host)"
         return 0
     fi
     # 端口预检: 在分发前探测 slave -> master API 可达性, 提前暴露安全组问题
@@ -91,7 +88,7 @@ function slave_install() {
     done
     log "[$user@$host] 安装包解压完成"
     # node name 直接取 conf/ssh_hosts 第5列的规划主机名(单一清单: 连接信息与主机名规划同文件, conf/hosts 由其派生)
-    local node_name=$(awk -F: -v ip="$host" '{sub(/#.*/,"")} $2==ip && $5!="" {print $5; exit}' "$TARGET_FILE" 2>/dev/null)
+    local node_name=$(get_planned_hostname "$host")
     local hname_args=""
     if [[ -n "$node_name" ]]; then
         hname_args="-hname $node_name"
@@ -112,6 +109,78 @@ function slave_install() {
         "mkdir -p ~/.kube && cat > ~/.kube/config && chmod 600 ~/.kube/config" < "$KUBE_ADMIN_CONFIG_FILE" \
         || color_echo ${yellow} "[$user@$host] kubectl 凭证分发失败(不影响集群加入, 可手动拷贝 master 的 $KUBE_ADMIN_CONFIG_FILE 到该机 ~/.kube/config)"
     log "[$user@$host] 全部完成"
+}
+
+# 单台 slave 解散: master 侧摘除节点记录 + 远程本机重置并删除安装目录(与 slave_install 对称的逆向流程)
+function slave_remove() {
+    local user=$1 host=$2 password=$3 port=$4
+    if is_local_host "$host"; then
+        color_echo ${fuchsia} "[$user@$host] 是 master 本机, 不参与单机解散(整体解散请用 destroy-cluster)"
+        return 0
+    fi
+    # 幂等预检: master 机器拒绝对称解散, 未加入过集群的机器无需解散
+    # half_joined(机器有残留但集群无记录)正是解散要处理的场景, 放行走清理流程
+    local node_state
+    node_state=$(probe_node_state "$user" "$host" "$port")
+    if [[ "$node_state" == "master" ]]; then
+        color_echo ${fuchsia} "[$user@$host] 是 master 节点, 不参与单机解散(整体解散请用 destroy-cluster)"
+        return 0
+    fi
+    if [[ "$node_state" != "joined" && "$node_state" != "half_joined" ]]; then
+        log "[$user@$host] 未加入集群, 无需解散"
+        return 0
+    fi
+    if ! prompt_for_confirmation "[$user@$host]" "解散该节点(摘除集群记录 + 清理机器)"; then
+        return 0
+    fi
+    # 节点名与 slave_install 同源: ssh_hosts 第5列规划名, 缺失时用远端当前主机名(按加入时的实际名摘除记录)
+    local node_name=$(get_planned_hostname "$host")
+    [[ -z "$node_name" ]] && node_name=$(timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "hostname" 2>/dev/null)
+    log "[$user@$host] master 侧摘除节点记录: $node_name"
+    kubectl delete node "$node_name" 2>/dev/null || log "节点 $node_name 已不在集群记录中"
+    # 远程本机重置(reset_local 不做节点删除, 节点记录已由上面精确摘除)
+    log "[$user@$host] 远程重置(kubeadm reset/卸载组件/清理配置)"
+    timeout -k 5 $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "if [ -d ~/$NODE_PACKAGE_PATH ]; then cd ~/$NODE_PACKAGE_PATH && /bin/bash clean-residue.sh -y reset_local; fi" || true
+    log "[$user@$host] 删除安装目录与安装包"
+    timeout -k 5 60 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+        "rm -rf ~/$NODE_PACKAGE_PATH ~/${NODE_PACKAGE_PATH}.tar.gz" || true
+    color_echo ${green} "[$user@$host] 已解散(如不再纳管请在 conf/ssh_hosts 注释该行)"
+    return 0
+}
+
+# 解散单台 slave(按 IP 或 ssh_hosts 第5列主机名定位目标)
+function remove_single_slave() {
+    local target=$1
+    if [ -z "$target" ]; then
+        color_echo ${red} "Usage: $0 remove-slave <ip|主机名>"
+        exit 1
+    fi
+    local line=$(awk -F: -v t="$target" '{sub(/#.*/,"")} $2==t || $5==t {print; exit}' "$TARGET_FILE")
+    if [ -z "$line" ]; then
+        color_echo ${red} "conf/ssh_hosts 中未找到目标: $target(可按 IP 或第5列主机名匹配)"
+        exit 1
+    fi
+    local user host password port discard
+    IFS=':' read -r user host password port discard <<< "$line"
+    ensure_passwordless
+    slave_remove "$user" "$host" "$password" "${port:-$DEFAULT_SSH_PORT}"
+}
+
+# 解散整个集群: 逐台 slave 清理解散, 最后重置 master 本机
+function destroy_cluster() {
+    echo -e "\033[31m警告: 将解散整个集群, 所有机器(master + slave)的 K8s 组件与配置将被清除, 不可恢复!\033[0m"
+    read -p "确认解散整个集群? 输入 yes 继续: " __confirm </dev/tty
+    if [[ "$__confirm" != "yes" ]]; then
+        color_echo ${yellow} "已取消"
+        exit 0
+    fi
+    ensure_passwordless
+    for_each_machine slave_remove
+    # master 本机最后重置(all 含清空节点记录, 此时 slave 均已摘除, 剩余记录随本机重置一并清除)
+    log "本机(master)重置"
+    /bin/bash clean-residue.sh -y all
+    color_echo ${green} "集群已解散, 如需重建重新执行 install-kube.sh 即可"
 }
 
 # 一键安装所有 slave: 免密自举后动态生成 join 凭据(kubeadm token), 批量分发安装
@@ -149,8 +218,14 @@ function main_entrance() {
         install-slaves)
             install_slaves
             ;;
+        remove-slave)
+            remove_single_slave "$2"
+            ;;
+        destroy-cluster)
+            destroy_cluster
+            ;;
         *)
-            echo "Usage: $0 {hosts|exec <command>|copy <local-file> [remote-path]|install-slaves}"
+            echo "Usage: $0 {hosts|exec <command>|copy <local-file> [remote-path]|install-slaves|remove-slave <ip|主机名>|destroy-cluster}"
             exit 1
             ;;
     esac

@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
+# -y 全程免交互(与 install-kube.sh 习惯一致), 可出现在任意位置: clean-residue.sh -y all
+# 解析在 source 之前完成, 环境变量 AUTO_CONFIRM 由 common.sh/variables.sh 消费
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        -y | -Y) export AUTO_CONFIRM=1 ;;
+        *) args+=("$arg") ;;
+    esac
+done
 source ./common.sh
 
-action=$1
+action=${args[0]}
 
 function del_kube_node() {
     kubectl get nodes | grep -q "$(hostname)" 1>&2 >/dev/null
@@ -103,6 +112,13 @@ function all() {
     del_kube_node &&  del_flannel && delete_dkube && rmove_kube_conf
 }
 
+# 本机重置(不动集群节点记录): 供群控 remove-slave 远程调用
+# 与 all 的区别: 不含 del_kube_node -- 单机解散时节点记录由 master 侧 kubectl delete node 精确摘除,
+# slave 持有 admin 凭证执行 delete node --all 会误删全集群节点(含 master)
+function reset_local() {
+    reset_kube && del_flannel && delete_dkube && rmove_kube_conf
+}
+
 function main_entrance() {
     case "${action}" in
     reset_kube)
@@ -122,6 +138,9 @@ function main_entrance() {
         ;;
     all)
         all
+        ;;
+    reset_local)
+        reset_local
         ;;
     esac
 }

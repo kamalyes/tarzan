@@ -534,15 +534,54 @@ function refresh_hosts_file() {
 
 # 解析 conf/ssh_hosts 为 "user host password port" 行(剥离注释与空行, 端口缺省补默认值)
 function parse_machines() {
-    local line user host password port
+    local line user host password port hostname
     while IFS= read -r line; do
         line="${line%%#*}"
         line="${line//[$'\t' ]/}"
         [[ -z "$line" ]] && continue
-        IFS=':' read -r user host password port <<< "$line"
+        # 第5列(规划主机名)由 hostname 变量吸收, 否则 read 会把它并入 port
+        IFS=':' read -r user host password port hostname <<< "$line"
         [[ -z "$user" || -z "$host" ]] && continue
         echo "$user $host $password ${port:-$DEFAULT_SSH_PORT}"
     done < "$TARGET_FILE"
+}
+
+# 查询机器的规划主机名(conf/ssh_hosts 第5列), 未配置返回空
+function get_planned_hostname() {
+    local host=$1
+    awk -F: -v ip="$host" '{sub(/#.*/,"")} $2==ip && $5!="" {print $5; exit}' "$TARGET_FILE" 2>/dev/null
+}
+
+# 探测节点的集群角色: master(admin.conf) / joined(有 kubelet.conf 且集群侧有节点记录) /
+# half_joined(机器有 kubelet.conf 残留但集群无此节点: 节点记录被删或加入半途中断, 需清理后才能重新加入) /
+# fresh(未加入)
+# joined 必须交叉校验集群侧记录, 只看机器文件会把半加入残留误判为已加入;
+# 本机直接查文件不发起 SSH, 远端短会话探测(僵死会话由 -k 5 强杀兜底), 探测失败返回空
+function probe_node_state() {
+    local user=$1 host=$2 port=$3
+    local state="fresh"
+    if is_local_host "$host"; then
+        if [ -f /etc/kubernetes/admin.conf ]; then
+            state="master"
+        elif [ -f /etc/kubernetes/kubelet.conf ]; then
+            state="joined"
+        fi
+    else
+        state=$(timeout -k 5 30 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+            'if [ -f /etc/kubernetes/admin.conf ]; then echo master; elif [ -f /etc/kubernetes/kubelet.conf ]; then echo joined; else echo fresh; fi' 2>/dev/null) || true
+    fi
+    if [[ "$state" == "joined" ]]; then
+        # 节点名与加入时同源: 规划名(ssh_hosts 第5列)优先, 缺失时取实际主机名(本机直接 hostname, 远端短会话获取)
+        local node_name=$(get_planned_hostname "$host")
+        if is_local_host "$host"; then
+            [[ -z "$node_name" ]] && node_name=$(hostname)
+        else
+            [[ -z "$node_name" ]] && node_name=$(timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "hostname" 2>/dev/null)
+        fi
+        # 到集群节点名单精确匹配第一列, 无记录则判半加入残留
+        kubectl get nodes --no-headers 2>/dev/null | awk -v n="$node_name" '$1==n{f=1} END{exit !f}' || state="half_joined"
+    fi
+    echo "$state"
 }
 
 # 遍历目标机器执行回调, 回调参数: user host password port ...
