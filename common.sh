@@ -61,6 +61,8 @@ function detect_cloud_provider() {
 # 云厂商软件源端点自适应(阿里云/腾讯云切换内网镜像域名, AWS 切换官方源), 依赖 KUBE_VERSION 已赋值
 function ensure_cloud_mirrors() {
   detect_cloud_provider
+  # docker.io 加速段缺省为空(直连), 腾讯云分支覆写; 供 update_containerd_conf 嵌入 config.toml 的 mirrors 段
+  DOCKER_IO_MIRROR_CONF=""
   case "$CLOUD_PROVIDER" in
     aliyun)
       log "检测到阿里云 ECS, 切换阿里云内网镜像源"
@@ -69,6 +71,10 @@ function ensure_cloud_mirrors() {
     tencent)
       log "检测到腾讯云 CVM, 切换腾讯云内网镜像源"
       MIRROR_ROOT="https://mirrors.cloud.tencent.com"
+      # 腾讯云内网 mirror 全量代理 docker.io 免公网流量(longhorn 等社区镜像直连 docker.io 会超时);
+      # 阿里云个人加速已停 / AWS 海外直连快, 其他云保持直连
+      DOCKER_IO_MIRROR_CONF='      [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+        endpoint = ["https://mirror.ccs.tencentyun.com"]'
       ;;
     aws)
       log "检测到 AWS EC2, 切换海外可达的官方源"

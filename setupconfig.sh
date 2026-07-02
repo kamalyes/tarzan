@@ -287,6 +287,8 @@ function update_limits_conf() {
 function update_containerd_conf() {
   log "配置containerd"
   run_command "cp $CONTAINERD_CONF $CONTAINERD_CONF.bak"
+  # 云厂商源切换 + docker.io 加速段统一由 ensure_cloud_mirrors 决定(腾讯云内网 mirror, 其他直连)
+  ensure_cloud_mirrors
   cat <<EOF | run_command "tee $CONTAINERD_CONF"
 disabled_plugins = []
 imports = []
@@ -427,6 +429,7 @@ version = 2
       [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
         [plugins."io.containerd.grpc.v1.cri".registry.mirrors."k8s.gcr.io"]
           endpoint = ["https://$GLOBAL_IMAGE_REPOSITORY"]
+${DOCKER_IO_MIRROR_CONF}
 
     [plugins."io.containerd.grpc.v1.cri".x509_key_pair_streaming]
       tls_cert_file = ""
