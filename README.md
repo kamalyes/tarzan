@@ -13,6 +13,7 @@ graph TB
         SCRIPTS["tarzan 脚本集<br/>install-kube.sh · group-control.sh<br/>install-addons.sh · install-components.sh"]
         CP["Kubernetes 控制面<br/>kube-apiserver :6443 · etcd<br/>controller-manager · scheduler"]
         CNI["CNI<br/>flannel / calico（init 后自动安装）"]
+        STO["存储层 longhorn<br/>默认存储类（init 后自动安装）"]
         ING["Ingress Controller（可选）<br/>traefik / ingress-nginx 二选一"]
     end
 
@@ -22,9 +23,10 @@ graph TB
 
     SCRIPTS -- "① kubeadm init 拉起控制面" --> CP
     SCRIPTS -- "② install-addons.sh 自动装 CNI" --> CNI
-    SCRIPTS -- "③ 可选 --traefik / --ingress-nginx" --> ING
-    SCRIPTS -- "④ ssh 免密分发 kube_slave.tar.gz<br/>并远程执行 install-kube.sh --join" --> NODE
-    NODE -- "⑤ kubeadm join :6443" --> CP
+    SCRIPTS -- "③ install-addons.sh 自动装 longhorn 存储层" --> STO
+    SCRIPTS -- "④ 可选 --traefik / --ingress-nginx" --> ING
+    SCRIPTS -- "⑤ ssh 免密分发 kube_slave.tar.gz<br/>并远程执行 install-kube.sh --join" --> NODE
+    NODE -- "⑥ kubeadm join :6443" --> CP
 ```
 
 ## 安装流程
@@ -33,7 +35,7 @@ graph TB
 flowchart TD
     A["① 前置准备（master）<br/>conf/ssh_hosts 一份清单搞定连接信息与主机名规划<br/>免密由群控自动建立"] --> B["② 安装 Master（master）<br/>sh install-kube.sh --flannel --hostname k8s-master"]
     B --> B1["系统初始化 · containerd · kubeadm init"]
-    B1 --> B2["自动安装 CNI（--flannel / --calico 二选一）<br/>可选 Ingress（--traefik / --ingress-nginx 二选一）"]
+    B1 --> B2["自动安装 CNI（--flannel / --calico 二选一）<br/>自动安装 longhorn 存储层（默认存储类）<br/>可选 Ingress（--traefik / --ingress-nginx 二选一）"]
     B2 --> B3["生成 kube_slave.tar.gz<br/>打印 join 命令并提示安全组放行端口"]
     B3 --> C["③ 一键安装所有 Slave（master）<br/>./group-control.sh install-slaves"]
     C --> C1["kubeadm token create 动态生成 join 凭据"]
@@ -154,7 +156,7 @@ EOF'
 [root@k8s-master tarzan]# sh install-kube.sh -y --calico --ingress-nginx --hostname k8s-master
 ```
 
-安装自动完成：系统初始化（内核参数/模块/chrony）→ containerd → `kubeadm init` → **自动安装所选 CNI** →（可选）安装 Ingress → 打包 `kube_slave.tar.gz` 并打印 join 命令：
+安装自动完成：系统初始化（内核参数/模块/chrony）→ containerd → `kubeadm init` → **自动安装所选 CNI** → **自动安装 longhorn 存储层**（业务组件/openobserve/traefik acme 的 PVC 依赖）→（可选）安装 Ingress → 打包 `kube_slave.tar.gz` 并打印 join 命令：
 
 ```bash
 ## [Tarzan Log]: 2024-09-27 11:25:12 - Executing command: kubeadm token create --print-join-command --ttl=0

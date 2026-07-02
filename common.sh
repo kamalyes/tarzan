@@ -670,6 +670,8 @@ function ensure_passwordless() {
             continue
         fi
         log "[$user@$host] SSH 免密未建立, 自动分发公钥"
+        # 重装系统的机器主机指纹已变(known_hosts 里的旧指纹会让 ssh 在认证前直接拒绝), 分发前清掉旧条目
+        ssh-keygen -R "$host" >/dev/null 2>&1
         if ! command -v sshpass >/dev/null 2>&1; then
             color_echo ${red} "[$user@$host] 缺少 sshpass, 请先安装后重试(yum install -y sshpass)"
             continue

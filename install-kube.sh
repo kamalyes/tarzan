@@ -150,6 +150,7 @@ function init_master() {
     bak_kube_config && \
     install_network_plugin && \
     poll_k8s_ready && \
+    install_storage_plugin && \
     install_ingress_plugin && \
     sub_slave_rely
 }
@@ -197,6 +198,12 @@ function install_network_plugin(){
         log "开始安装$KUBE_NETWORK version: $CALICO_VERSION"
         run_command "/bin/bash install-addons.sh calico $CALICO_VERSION"
     fi
+}
+
+# 存储层安装(longhorn 是集群默认存储类提供者: 业务组件/openobserve/traefik acme 的 PVC 都依赖, 必装)
+function install_storage_plugin(){
+    log "开始安装存储层 longhorn(版本按集群档位自动选择)"
+    run_command "/bin/bash install-addons.sh longhorn"
 }
 
 # Ingress Controller 安装(traefik 与 ingress-nginx 二选一, 由 --traefik / --ingress-nginx 指定)
