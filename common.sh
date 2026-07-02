@@ -605,16 +605,19 @@ function probe_node_state() {
 function for_each_machine() {
     local exec_fn=$1
     shift
-    local line user host password port failed=0
-    local machines=()
+    local user host password port failed=0
+    local machines_list
     require_hosts_file
-    mapfile -t machines < <(parse_machines)
-    for line in "${machines[@]}"; do
-        read -r user host password port <<< "$line"
+    # 清单先落临时文件再循环(进程替换 <() 是 bashism, sh 调用时语法错)
+    machines_list=$(mktemp)
+    parse_machines > "$machines_list"
+    # fd3 读清单, stdin 留给回调内的 ssh 消费(边读边执行会吞掉后续机器)
+    while read -r user host password port <&3; do
         if ! "$exec_fn" "$user" "$host" "$password" "$port" "$@"; then
             failed=1
         fi
-    done
+    done 3< "$machines_list"
+    rm -f "$machines_list"
     return $failed
 }
 
@@ -638,11 +641,12 @@ function ensure_passwordless() {
         log "本机不存在 SSH 密钥, 自动生成 $SSH_PRIVATE_RAS_FILE"
         run_command "ssh-keygen -t rsa -b 4096 -N '' -f $SSH_PRIVATE_RAS_FILE"
     fi
-    local line user host password port
-    local machines=()
-    mapfile -t machines < <(parse_machines)
-    for line in "${machines[@]}"; do
-        read -r user host password port <<< "$line"
+    local user host password port
+    local machines_list
+    # 同 for_each_machine: 临时文件 + fd3 循环(避免进程替换 bashism)
+    machines_list=$(mktemp)
+    parse_machines > "$machines_list"
+    while read -r user host password port <&3; do
         if is_local_host "$host"; then
             continue
         fi
@@ -662,7 +666,8 @@ function ensure_passwordless() {
         if ! timeout -k 5 30 sshpass -p "$password" ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p "$port" "$user@$host"; then
             color_echo ${red} "[$user@$host] 公钥分发失败, 请检查 conf/ssh_hosts 的密码与端口"
         fi
-    done
+    done 3< "$machines_list"
+    rm -f "$machines_list"
 }
 
 # 单台远程执行命令(for_each_machine 回调)

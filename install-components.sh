@@ -121,6 +121,12 @@ function install_valkey_cluster() {
 }
 
 function main_entrance() {
+    # 有状态组件的 PVC 依赖存储类(单组件与 all 统一前置检测, 缺失时提示先装 longhorn)
+    case "${action}" in
+        clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|all)
+            check_storage_class
+            ;;
+    esac
     case "${action}" in
         namespace)
             install_namespace
@@ -148,8 +154,6 @@ function main_entrance() {
             ;;
         all)
             log "准备安装所有业务组件..."
-            # 有状态组件的 PVC 依赖存储类
-            check_storage_class
             install_namespace
             install_secrets
             install_valkey default VALKEY_DEFAULT_PASSWORD 30014

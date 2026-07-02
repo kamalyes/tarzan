@@ -57,16 +57,16 @@ function cert_manager() {
 
 function traefik() {
     check_ingress_exclusive traefik nginx
+    # deployment 形态的 acme PVC 依赖存储类(前置检测, 与 components 统一)
+    if [[ $TRAEFIK_DEPLOY_MODE == "deployment" ]]; then
+        check_storage_class
+    fi
     local dir="$TARZAN_ADDONS_PATH/kube-traefik"
     # CRD 清单已入仓(traefik 3.x 对 1.23/1.28 双档共用一份), 先注册 CRD 再装主体(与主体一致走渲染副本, 不直接 apply 模板原件)
     install_rendered "traefik-crd" "$TARZAN_ADDONS_PATH/.rendered-traefik-crd.yaml" "$dir/crd-definition-v1.yml"
     # 基础清单按部署形态(deployment/daemonset)渲染
     install_rendered "traefik-${TRAEFIK_DEPLOY_MODE}" "$TARZAN_ADDONS_PATH/.rendered-traefik.yaml" \
         "$dir/namespace.yaml" "$dir/rbac.yaml" "$dir/$TRAEFIK_DEPLOY_MODE.yaml" "$dir/service.yaml" "$dir/ingressclass.yaml"
-    # deployment 形态的 acme PVC 依赖存储类
-    if [[ $TRAEFIK_DEPLOY_MODE == "deployment" ]]; then
-        check_storage_class
-    fi
     kubectl get all -n ingress
 }
 
@@ -75,11 +75,11 @@ function openobserve() {
         color_echo ${red} "请先执行 install-components.sh secrets 生成监控密钥"
         exit 1
     fi
+    # 数据卷依赖存储类(前置检测, 与 components 统一)
+    check_storage_class
     local dir="$TARZAN_ADDONS_PATH/kube-openobserve"
     install_rendered "openobserve" "$TARZAN_ADDONS_PATH/.rendered-openobserve.yaml" \
         "$dir"/namespace.yaml "$dir"/statefulset.yaml "$dir"/service.yaml "$dir"/service-nodeport.yaml
-    # 数据卷依赖存储类
-    check_storage_class
     kubectl get all -n monitoring
 }
 
