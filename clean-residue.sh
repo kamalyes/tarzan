@@ -46,17 +46,13 @@ function del_flannel() {
     del_flannel_prompt="删除flannel网络配置和flannel网口"
     if prompt_for_confirmation "$which_prompt" "$del_flannel_prompt"; then
         rm -rf /etc/cni
-        # 删除cni网络
-        ifconfig cni0 down    
-        ip link delete cni0
-        ip link add cni0 type bridge
-        ip link set dev cni0 up
-        ifconfig cni0 $KUBE_POD_SUBNET
-        ifconfig cni0 mtu 1450 up
-        # 若不生效也可以进入该目录下直接删除配置文件后重启网络(Debian 无此目录, 跳过)
-        if [[ -d /etc/sysconfig/network-scripts ]]; then
-            cd /etc/sysconfig/network-scripts/
-        fi
+        # 删除残留网桥与 VXLAN 接口(cni0 由 flannel 在节点重新加入后按 controller 新分配的 podCIDR 自动重建;
+        # 手工重建并预设全局网段 IP 会与重新分配的 podCIDR 冲突: cni0 already has an IP address different)
+        ip link delete cni0 2>/dev/null || true
+        ip link delete flannel.1 2>/dev/null || true
+        # 清理 flannel 子网缓存与 CNI 运行数据(残留旧子网会让 flannel 沿用与重新分配不一致的网段)
+        rm -f /run/flannel/subnet.env
+        rm -rf /var/lib/cni
         log "${del_flannel_prompt} OK"
     fi
 }
