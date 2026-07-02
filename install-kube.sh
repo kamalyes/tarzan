@@ -138,20 +138,10 @@ function poll_k8s_ready() {
 
 function init_master() {
     log "初始化kubeadm-init配置"
-    rm -rf kubeadm-init.yaml && cp conf/kubeadm-init-template.yaml kubeadm-init.yaml
-    sed -i "s|{{GLOBAL_IMAGE_REPOSITORY}}|$GLOBAL_IMAGE_REPOSITORY|g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_ADVERTISE_ADDRESS}}/$KUBE_ADVERTISE_ADDRESS/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_BIND_PORT}}/$KUBE_BIND_PORT/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_TOKEN}}/$KUBE_TOKEN/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_NODE_NAME}}/$KUBE_NODE_NAME/g" kubeadm-init.yaml
-    sed -i "s/{{KUBE_VERSION}}/$KUBE_VERSION/g" kubeadm-init.yaml
-    sed -i "s|{{KUBE_POD_SUBNET}}|$KUBE_POD_SUBNET|g" kubeadm-init.yaml
-    sed -i "s|{{KUBE_SERVICE_SUBNET}}|$KUBE_SERVICE_SUBNET|g" kubeadm-init.yaml
-    sed -i "s|{{KUBE_IMAGE_PULL_POLICY}}|$KUBE_IMAGE_PULL_POLICY|g" kubeadm-init.yaml
-    sed -i "s|{{KUBERNETES_PKI_PATH}}|$KUBERNETES_PKI_PATH|g" kubeadm-init.yaml
-    sed -i "s|{{KUBERNETES_ETCD}}|$KUBERNETES_ETCD|g" kubeadm-init.yaml
-    sed -i "s|{{CRI_SOCKET_SOCK_FILE}}|$CRI_SOCKET_SOCK_FILE|g" kubeadm-init.yaml
-    
+    # 渲染副本 + 占位符替换统一走 common.sh 机制(与 addons/components 一致, 模板原件永不修改)
+    render_manifest kubeadm-init.yaml conf/kubeadm-init-template.yaml
+    replace_manifest_placeholders kubeadm-init.yaml
+
     cat kubeadm-init.yaml
     # addons 占位符已由 install-addons.sh 在 apply 时渲染为副本(模板原件不被修改), 此处不再预渲染
 

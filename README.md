@@ -1,4 +1,4 @@
-Tarzan 一个复制-粘贴-敲回车 K8s 集群环境就好了
+Tarzan：复制-粘贴-敲回车，一个 K8s 集群环境就好了
 
 > **全程只需在 k8s-master 一台机器上操作**：一条命令装好 Master（含系统初始化、containerd、kubeadm init、CNI），一条命令让所有 Slave 自动加入集群，后续新增节点同样是一条命令，无需登录任何一台 Slave
 
@@ -38,7 +38,7 @@ flowchart TD
     B3 --> C["③ 一键安装所有 Slave（master）<br/>./group-control.sh install-slaves"]
     C --> C1["kubeadm token create 动态生成 join 凭据"]
     C1 --> C2["预检 master API 可达性<br/>rsync/scp 分发安装包(断点续传+进度回显)"]
-    C2 --> C3["远程解压(进度监控)并执行 install-kube.sh --join<br/>节点名自动 k8s-node-<IP末段>"]
+    C2 --> C3["远程解压(进度监控)并执行 install-kube.sh --join<br/>节点名取 conf/ssh_hosts 第5列规划主机名"]
     C3 --> D["④ 验证（master）<br/>kubectl get nodes 全部 Ready"]
     D --> E{"后续新增 Slave？"}
     E -- "清单追加新机器<br/>重跑 install-slaves" --> C
@@ -72,7 +72,7 @@ flowchart TD
 **确定服务器系统镜像&OS内核版本**
 
 ```bash
-[root@k8s-master tarzan]# cat /proc/version # 也可以使用命令uname -r查看 3.10.0-1160.119.1.el7.x86_64
+[root@k8s-master tarzan]# cat /proc/version   # 也可用 uname -r 查看内核版本
 Linux version 3.10.0-1160.119.1.el7.x86_64 (mockbuild@kbuilder.bsys.centos.org) (gcc version 4.8.5 20150623 (Red Hat 4.8.5-44) (GCC) )
 [root@k8s-master tarzan]# uname -m
 x86_64
@@ -165,15 +165,15 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 
 # 安装 Slave
 
-## 方式一: 群控一键安装（推荐， 全程在 master 操作）
+## 方式一: 群控一键安装（推荐，全程在 master 操作）
 
 ```bash
 [root@k8s-master tarzan]# ./group-control.sh install-slaves
 ```
 
-脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 分发前从 slave 侧预检 master API（6443）可达性，安全组问题提前暴露 → 逐台分发 `kube_slave.tar.gz`（优先 rsync 断点续传，中断重跑只补差量；传输与解压均有 15 秒粒度进度回显）→ 远程解压并执行 `install-kube.sh --join`（节点名自动设为 `k8s-node-<IP末段>`，与 k8s-master 风格统一）→ 分发 kubectl 凭证到 node 的 `~/.kube/config`（加入后直接可在 node 上使用 kubectl）
+脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 分发前从 slave 侧预检 master API（6443）可达性，安全组问题提前暴露 → 逐台分发 `kube_slave.tar.gz`（优先 rsync 断点续传，中断重跑只补差量；传输有耗时回显，解压每 3 秒探测进度）→ 远程解压并执行 `install-kube.sh --join`（节点名取 `conf/ssh_hosts` 第5列的规划主机名，未配置时以机器默认主机名加入）→ 分发 kubectl 凭证到 node 的 `~/.kube/config`（加入后直接可在 node 上使用 kubectl）
 
-注意：`install-slaves` 会**自动跳过**清单里的 master 与已加入集群的节点（按 `/etc/kubernetes/kubelet.conf` 判断），清单无需注释已装机器；某台安装失败会明确报错且不影响其余机器继续安装，全部装完后整体退出码非 0；`kube_slave.tar.gz` 被清理后可先执行 `sh install-kube.sh --pack-slave` 补包（master 已就绪时不重跑安装流程）
+注意：`install-slaves` 会**自动跳过**清单里的 master 与已加入集群的节点（机器文件与集群节点记录双重判断），清单无需注释已装机器；机器有安装残留但集群无节点记录（节点被删或加入中断）时会明确提示先执行 `remove-slave` 清理，不会被误判为已加入；某台安装失败会明确报错且不影响其余机器继续安装，全部装完后整体退出码非 0；`kube_slave.tar.gz` 被清理后可先执行 `sh install-kube.sh --pack-slave` 补包（master 已就绪时不重跑安装流程）
 
 ## 方式二: 手工方式
 
@@ -184,7 +184,7 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 # 2. 登录每台 slave 解压执行（内网）
 [root@k8s-node1 tarzan]# sh install-kube.sh -y --join --masterip 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-cert-hash sha256:0c7e8afb55c242c351bfb744cc4e64cf7221033f3dd7f4aaa995602cb6af3b9d
 
-# 3. 外网 slave 需在安装时追加 -addr ${node-external-ip} --create-virtualeth
+# 3. 外网 slave 需在安装时追加 -addr <node-external-ip> --create-virtualeth
 [root@k8s-node1 tarzan]# sh install-kube.sh -y --join -addr 114.132.233.16 --create-virtualeth --masterip 115.233.233.15:6443 --token xxx --discovery-token-ca-cert-hash xxxx
 ```
 
@@ -227,16 +227,16 @@ k8s-node3    Ready    <none>                 10m   v1.23.3   10.0.0.10         <
 ```bash
 # 版本参数可缺省(取 variables.sh 默认值), metrics 与 state-metrics-standard 部署在 kube-system
 [root@k8s-master tarzan]# sh install-addons.sh metrics
-## [Tarzan Log]: 2024-09-27 11:27:00  - 准备安装 metrics 版本 0.6.4 和 state-metrics-standard 版本 2.10.0
-## [Tarzan Log]: 2024-09-27 11:27:00  - 开始安装组件 metrics-v0.6.4
-## [Tarzan Log]: 2024-09-27 11:27:00  - Executing command: kubectl apply -f addons/.rendered-metrics.yaml
+## [Tarzan Log]: 2024-09-27 11:27:00 - 准备安装 metrics 版本 0.6.4 和 state-metrics-standard 版本 2.10.0
+## [Tarzan Log]: 2024-09-27 11:27:00 - 开始安装组件 metrics-v0.6.4
+## [Tarzan Log]: 2024-09-27 11:27:00 - Executing command: kubectl apply -f addons/.rendered-metrics.yaml
 serviceaccount/metrics-server created
 clusterrole.rbac.authorization.k8s.io/system:aggregated-metrics-reader created
 deployment.apps/metrics-server created
 service/metrics-server created
-## [Tarzan Log]: 2024-09-27 11:27:00  - kube-system 全部 Pod 就绪, 安装完成
+## [Tarzan Log]: 2024-09-27 11:27:00 - kube-system 全部 Pod 就绪, 安装完成
 
-# 修改NodePort的默认端口 原理：默认k8s的使用端口的范围为30000左右，作为对外部提供的端口我们也可以通过对配置文件的修改去指定默认的对外端口的范围
+# 修改 NodePort 默认端口范围: k8s 默认对外端口范围为 30000-32767, 可通过修改 apiserver 配置自定义对外端口范围
 [root@k8s-master tarzan]# vim /etc/kubernetes/manifests/kube-apiserver.yaml
 spec:
   containers:
@@ -266,7 +266,7 @@ deployment.apps/ndp-nginx   1/1     1            1            19s
 NAME                                   DESIRED   CURRENT   READY   AGE
 replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 
-# horizontalpodautoscaler TARGETS 有一个unknown?等待1min后再次刷新OK，开放30001端口后即可访问了
+# horizontalpodautoscaler 的 TARGETS 显示 unknown？等待 1min 后再次刷新即 OK，开放 30001 端口后即可访问
 ```
 
 # 集群扩展组件
@@ -310,6 +310,8 @@ replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 [root@k8s-master tarzan]# ./group-control.sh exec "kubectl get nodes"    # 批量执行命令
 [root@k8s-master tarzan]# ./group-control.sh copy kube_slave.tar.gz ~/    # 批量分发文件
 [root@k8s-master tarzan]# ./group-control.sh install-slaves               # 一键安装清单内所有 slave(预检/断点续传/进度回显/凭证分发)
+[root@k8s-master tarzan]# ./group-control.sh remove-slave 10.0.0.8       # 解散单台节点(摘除集群记录 + 清理机器, 可按 IP 或主机名定位)
+[root@k8s-master tarzan]# ./group-control.sh destroy-cluster             # 解散整个集群(危险操作, 需输入 yes 二次确认)
 ```
 
 # 二次开发
@@ -317,17 +319,18 @@ replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 **拉取代码**
 
 ```bash
-# 因为包有点大所以需要克隆深度=1，其中很多离线包 所以需要用到git-lfs插件
+# 仓库包含大量离线包, 建议浅克隆(--depth=1)并安装 git-lfs 插件
 [root@k8s-master opt]# git clone --depth=1 git@github.com:kamalyes/tarzan.git
 [root@k8s-master opt]# cd tarzan
 ```
 
 **脚本列表**
 
+- `clean-residue.sh`: 残留清理（all/reset_local 等动作，支持 `-y` 免交互）
 - `common.sh`: 通用函数库
 - `crictl.sh`: 容器运行时管理
 - `gitattributes.sh`: Git 属性管理
-- `group-control.sh`: 群控（批量 exec/copy、一键安装所有 slave）
+- `group-control.sh`: 群控（批量 exec/copy、一键安装/解散 slave、销毁集群）
 - `install-addons.sh`: 安装 Kubernetes 附加组件（flannel/calico/dashboard/ingress-nginx/metrics/descheduler/traefik/longhorn/cert-manager/openobserve/otel）
 - `install-components.sh`: 业务组件安装（components 模板渲染）
 - `install-kube.sh`: 安装 Kubernetes

@@ -317,7 +317,7 @@ function generate_openobserve_basic_auth() {
     printf '%s:%s' "$user" "$password" | base64 -w 0
 }
 
-# 全局占位符统一替换(addons 与 components 模板通用; 模板中不存在的占位符替换无副作用,
+# 全局占位符统一替换(addons/components/kubeadm init 模板通用; 模板中不存在的占位符替换无副作用,
 # 多实例差异量(VALKEY_NAME 等)与档位版本由调用方以环境前缀临时注入)
 function replace_manifest_placeholders() {
     local file=$1
@@ -361,6 +361,15 @@ function replace_manifest_placeholders() {
         -e "s|{{KUBE_FLANNEL_RUN_MOUNTPATH}}|$KUBE_FLANNEL_RUN_MOUNTPATH|g" \
         -e "s|{{CALICO_IPV4POOL_CIDR}}|$CALICO_IPV4POOL_CIDR|g" \
         -e "s|{{CALICO_IPV4POOL_IPIP}}|$CALICO_IPV4POOL_IPIP|g" \
+        -e "s|{{KUBE_ADVERTISE_ADDRESS}}|$KUBE_ADVERTISE_ADDRESS|g" \
+        -e "s|{{KUBE_BIND_PORT}}|$KUBE_BIND_PORT|g" \
+        -e "s|{{KUBE_TOKEN}}|$KUBE_TOKEN|g" \
+        -e "s|{{KUBE_NODE_NAME}}|$KUBE_NODE_NAME|g" \
+        -e "s|{{KUBE_VERSION}}|$KUBE_VERSION|g" \
+        -e "s|{{KUBE_SERVICE_SUBNET}}|$KUBE_SERVICE_SUBNET|g" \
+        -e "s|{{KUBERNETES_PKI_PATH}}|$KUBERNETES_PKI_PATH|g" \
+        -e "s|{{KUBERNETES_ETCD}}|$KUBERNETES_ETCD|g" \
+        -e "s|{{CRI_SOCKET_SOCK_FILE}}|$CRI_SOCKET_SOCK_FILE|g" \
         "$file"
     # OpenObserve 凭据仅在模板实际引用时生成(避免无关组件因密钥文件缺失而中断)
     if grep -q '{{OPENOBSERVE_BASIC_AUTH}}' "$file"; then

@@ -51,18 +51,15 @@ function cert_manager() {
     # 清单已入仓: 1.23 集群用兼容版, 1.28+ 集群用新版(环境前缀将档位版本传入占位符替换)
     local version
     version=$(legacy_or_modern "$CERT_MANAGER_LEGACY_VERSION" "$CERT_MANAGER_VERSION")
-    CERT_MANAGER_VERSION="$version" install_rendered "cert-manager-v${version}" \
-        "$TARZAN_ADDONS_PATH/.rendered-cert-manager.yaml" \
+    CERT_MANAGER_VERSION="$version" install_component "cert-manager" "$version" \
         "$TARZAN_ADDONS_PATH/kube-cert-manager/$version/cert-manager.yaml"
-    kubectl get all -n cert-manager
-    check_pod_status cert-manager
 }
 
 function traefik() {
     check_ingress_exclusive traefik nginx
     local dir="$TARZAN_ADDONS_PATH/kube-traefik"
-    # CRD 清单已入仓(traefik 3.x 对 1.23/1.28 双档共用一份), 先注册 CRD 再装主体
-    run_command "kubectl apply -f $dir/crd-definition-v1.yml"
+    # CRD 清单已入仓(traefik 3.x 对 1.23/1.28 双档共用一份), 先注册 CRD 再装主体(与主体一致走渲染副本, 不直接 apply 模板原件)
+    install_rendered "traefik-crd" "$TARZAN_ADDONS_PATH/.rendered-traefik-crd.yaml" "$dir/crd-definition-v1.yml"
     # 基础清单按部署形态(deployment/daemonset)渲染
     install_rendered "traefik-${TRAEFIK_DEPLOY_MODE}" "$TARZAN_ADDONS_PATH/.rendered-traefik.yaml" \
         "$dir/namespace.yaml" "$dir/rbac.yaml" "$dir/$TRAEFIK_DEPLOY_MODE.yaml" "$dir/service.yaml" "$dir/ingressclass.yaml"
@@ -94,18 +91,15 @@ function otel() {
     OTEL_OPERATOR_VERSION="$version" install_rendered "otel-operator-v${version}" \
         "$TARZAN_ADDONS_PATH/.rendered-otel-operator.yaml" \
         "$dir/$version/opentelemetry-operator.yaml"
-    # 等待 operator 的 CRD 在 API Server 完成注册
-    until kubectl get crd opentelemetrycollectors.opentelemetry.io &>/dev/null; do
-        log "等待 opentelemetrycollectors CRD 注册..."
-        sleep 2
-    done
+    # 等待 operator 的 CRD 完成注册(对齐 longhorn 的 kubectl wait 模式, 带超时上限)
+    run_command "kubectl wait --for=condition=Established crd/opentelemetrycollectors.opentelemetry.io --timeout=120s"
     # 采集器所在命名空间先行
     run_command "kubectl create namespace $OTEL_BUSINESS_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -"
     run_command "kubectl create namespace $OTEL_OPENAPI_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -"
     local collector
     for collector in business-otel.yml openapi-otel.yml; do
         install_rendered "otel-collector-${collector%.yml}" \
-            "$TARZAN_ADDONS_PATH/.rendered-$collector" "$dir/$collector"
+            "$TARZAN_ADDONS_PATH/.rendered-${collector%.yml}.yaml" "$dir/$collector"
     done
 }
 
@@ -114,9 +108,15 @@ function longhorn() {
     # install 清单已入仓: 1.23 集群用兼容版, 1.28+ 集群用新版; settings 覆盖默认副本数
     local version
     version=$(legacy_or_modern "$LONGHORN_LEGACY_VERSION" "$LONGHORN_VERSION")
+    # 主体(CRD+控制器)与 settings 分两步装: Setting 是 CRD 自定义资源, 与 CRD 同批 apply 时类型尚未注册进集群,
+    # kubectl 无法识别(对齐 traefik/otel 的 "CRD 先行等待注册" 模式)
     LONGHORN_VERSION="$version" install_rendered "longhorn-v${version}" \
         "$TARZAN_ADDONS_PATH/.rendered-longhorn.yaml" \
-        "$dir/$version/install.yaml" "$dir/settings.yaml"
+        "$dir/$version/install.yaml"
+    run_command "kubectl wait --for=condition=Established crd/settings.longhorn.io --timeout=120s"
+    install_rendered "longhorn-settings" \
+        "$TARZAN_ADDONS_PATH/.rendered-longhorn-settings.yaml" \
+        "$dir/settings.yaml"
     kubectl get all -n longhorn-system
     check_pod_status longhorn-system
 }
