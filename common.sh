@@ -378,6 +378,7 @@ function replace_manifest_placeholders() {
 }
 
 # 渲染副本(模板原件永不修改): 单文件直接拷贝, 目录合并其下 yaml, 多路径按序合并
+# 合并时文件间统一补 --- 分隔(模板首尾缺失分隔符会让相邻文档黏连成一个, 拼接处重复键被覆盖产生畸形资源)
 function render_manifest() {
     local target=$1
     shift
@@ -389,11 +390,26 @@ function render_manifest() {
     local src
     for src in "$@"; do
         if [ -d "$src" ]; then
-            cat "$src"/*.yaml >> "$target"
+            local f
+            for f in "$src"/*.yaml; do
+                [ -f "$f" ] || continue
+                append_render_source "$target" "$f"
+            done
         else
-            cat "$src" >> "$target"
+            append_render_source "$target" "$src"
         fi
     done
+}
+
+# 追加单个清单源到渲染副本: 源之间补 --- 分隔
+# 补 --- 前先确保末行带换行(模板末行缺换行时 --- 会黏成 "xxx---" 失去文档分隔作用)
+function append_render_source() {
+    local target=$1 src=$2
+    if [ -s "$target" ]; then
+        if [ -n "$(tail -c 1 "$target")" ]; then printf -- '\n' >> "$target"; fi
+        printf -- '---\n' >> "$target"
+    fi
+    cat "$src" >> "$target"
 }
 
 # 从清单动态提取镜像并预拉取(镜像来自渲染后的清单, 不在脚本内写死)
