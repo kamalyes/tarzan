@@ -160,7 +160,8 @@ COCKROACHDB_IMAGE="cockroach/cockroach:${COCKROACHDB_VERSION}"
 NATS_IMAGE="nats:${NATS_VERSION}"
 VALKEY_IMAGE="valkey/valkey:${VALKEY_VERSION}"
 TRAEFIK_IMAGE="traefik:v${TRAEFIK_VERSION}"
-OPENOBSERVE_IMAGE="public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION}"
+# OpenObserve 官方双源发布(ECR/Docker Hub 同 tag), 用 docker.io 源: ECR 国内不可达, docker.io 可走云厂商内网 mirror
+OPENOBSERVE_IMAGE="openobserve/openobserve:${OPENOBSERVE_VERSION}"
 OTEL_COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION}"
 
 # 业务组件安装信息(components 由 install-components.sh 动态生成, 不维护静态yaml)
