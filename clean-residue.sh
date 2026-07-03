@@ -60,14 +60,21 @@ function del_flannel() {
 function delete_dkube() {
     delete_dkube_prompt="卸载k8s&Docker等相关程序"
     if prompt_for_confirmation "$which_prompt" "$delete_dkube_prompt"; then
-        # 按发行版选择包管理器(rhel 家族 yum / debian 家族 apt-get)
+        # 先停服务/杀进程再卸载: 包事务内的 stop scriptlet 在服务退出无响应(crash-loop/后台任务未结束)时
+        # 会把整个 yum 事务卡死在 Running transaction 无输出; 卸载跳过 scriptlet, 服务与配置清理由本函数与 rmove_kube_conf 显式完成
+        systemctl disable --now kubelet docker containerd 2>/dev/null || true
+        pkill -9 kubelet 2>/dev/null || true
+        pkill -9 dockerd 2>/dev/null || true
+        pkill -9 containerd 2>/dev/null || true
+        # 按发行版选择包管理器(rhel 家族 rpm / debian 家族 apt-get)
         if [[ "$OS_FAMILY" == "debian" ]]; then
             apt-get purge -y 'kube*' 'docker*' containerd.io
             apt-get install -y lsof
         else
-            yum -y remove kube*
-            yum -y remove docker*
-            yum -y install lsof
+            # 与安装对称走 rpm 直卸(安装为 rpm -ivhU 绕过 yum, 经 yum 卸载必告警 RPMDB altered);
+            # containerd.io 包名不匹配 docker* 通配, 显式纳入避免残留
+            rpm -qa | grep -E '^(kube|docker|containerd)' | xargs -r rpm -e --nodeps --noscripts
+            yum -y install lsof 2>/dev/null || true
         fi
         lsof -i :6443 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
         lsof -i :10251 | grep -v "PID" | awk '{print "kill -9",$2}' | sh
@@ -78,7 +85,8 @@ function delete_dkube() {
         if [[ "$OS_FAMILY" == "debian" ]]; then
             apt-get autoremove -y && apt-get clean
         else
-            yum clean all && yum makecache
+            # 只清缓存不 makecache: 公网受限机器上刷新全部 repo 元数据会长时间阻塞, 且重装流程会自行准备源
+            yum clean all
         fi
         log "${delete_dkube_prompt} OK"
     fi
@@ -89,6 +97,9 @@ function rmove_kube_conf() {
     if prompt_for_confirmation "$which_prompt" "$rmove_kube_conf_prompt"; then
         modprobe -r ipip
         lsmod
+        # kubelet 停止不会自动卸载 pod 挂载点, 残留挂载会让 rm -rf 报 Device or resource busy 中断清理
+        # 先懒卸载 kubelet 目录下全部挂载(倒序先卸深层挂载; -l 懒卸载避免挂载点互相依赖时阻塞)
+        mount | awk '/\/var\/lib\/kubelet/{print $3}' | sort -r | xargs -r -n1 umount -l 2>/dev/null || true
         rm -rf ~/.kube/
         rm -rf /etc/kubernetes/
         rm -rf /etc/systemd/system/kubelet.service.d

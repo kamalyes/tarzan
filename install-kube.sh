@@ -68,7 +68,7 @@ function load_images {
     kubeadm config images list --image-repository "$GLOBAL_IMAGE_REPOSITORY"
 
     # 默认在线拉取; 仅当策略允许离线(IfNotPresent/Never)且离线镜像目录真实存在时才走离线导入
-    # (slave 安装包按最小化组装不携带 crictl-images, 若无此兜底会: 跳过导入 -> crictl images 校验失败 -> 安装中断)
+    # (CentOS 7 打包的 slave 包自带 crictl-images 基础镜像副本; 其他场景缺目录时兜底走在线拉取, 拉取带 300s 超时)
     local load_command="online_pull_kube_base_images"
     if [[ "$OFFLINE_SUPPORTED" == 1 ]] && [ -d "$CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION" ]; then
         case "$KUBE_IMAGE_PULL_POLICY" in
@@ -232,6 +232,13 @@ function sub_slave_rely(){
     if [[ $OFFLINE_SUPPORTED == 1 ]]; then
         # 复制指定的目录到 $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
         cp -R $TARZAN_OFFLINE_PATH/{base-dependence,bash-completion,cni,conntrack,containerd,k8s/$KUBE_VERSION} "$NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH"
+        # master 导出 slave 加入所需的基础镜像副本(kube-proxy/pause)打进分发包: slave 走离线导入免公网拉取
+        # (跨云拉公网 registry 被限速时 crictl pull 会无限卡死, 包内镜像副本是根治手段; 导出失败不阻塞打包, slave 侧兜底走在线拉取)
+        if run_command "/bin/bash crictl.sh export_slave_base_images $KUBE_VERSION $GLOBAL_IMAGE_REPOSITORY"; then
+            cp -R $CRICTL_IMAGE_TAR_PATH/$KUBE_VERSION "$NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH/"
+        else
+            color_echo ${yellow} "slave 基础镜像副本导出失败, 分发包不带镜像(slave 加入时将在线拉取, 公网受限场景可能缓慢)"
+        fi
     else
         mkdir -p $NODE_PACKAGE_PATH/$TARZAN_OFFLINE_PATH
     fi

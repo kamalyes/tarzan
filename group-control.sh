@@ -139,8 +139,8 @@ function slave_remove() {
     log "[$user@$host] master 侧摘除节点记录: $node_name"
     kubectl delete node "$node_name" 2>/dev/null || log "节点 $node_name 已不在集群记录中"
     # 远程本机重置(reset_local 不做节点删除, 节点记录已由上面精确摘除)
-    log "[$user@$host] 远程重置(kubeadm reset/卸载组件/清理配置)"
-    timeout -k 5 $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+    # 清理耗时远短于安装, 专用 600s 超时兜底($SSH_EXEC_TIMEOUT 3600s 等于无兜底, 远端卡死时干等一小时)
+    timeout -k 5 600 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
         "if [ -d ~/$NODE_PACKAGE_PATH ]; then cd ~/$NODE_PACKAGE_PATH && /bin/bash clean-residue.sh -y reset_local; fi" || true
     log "[$user@$host] 删除安装目录与安装包"
     timeout -k 5 60 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
