@@ -72,8 +72,8 @@ function offline_install_kube(){
       log "离线安装kubelet kubeadm kubectl OK,k8s version: $(color_title $green $new_k8s_version)"
       log "开始离线安装bash-completion命令补全工具"
       rpm -ivhU $TARZAN_OFFLINE_PATH/bash-completion/*.rpm --nodeps --force
-      log "写入bash-completion环境变量"
-      [[ -z $(grep kubectl ~/.bashrc) ]] && echo "source /usr/share/bash-completion/bash_completion && kubectl completion bash | sudo tee /etc/bash_completion.d/kubectl > /dev/null"
+      # kubectl 补全脚本落到系统补全目录(与在线安装路径统一; bash-completion 包的 profile.d 脚本登录时自动加载该目录)
+      kubectl completion bash > /etc/bash_completion.d/kubectl
       log "离线安装bash命令补全工具 OK"
   fi
   enable_service "kubelet"
@@ -299,7 +299,8 @@ function online_install_kube() {
     run_command "dnf install -y --disableexcludes=kubernetes kubelet-$KUBE_VERSION kubeadm-$KUBE_VERSION kubectl-$KUBE_VERSION"
   fi
   log "写入 kubectl 命令补全"
-  kubectl completion bash | run_command "tee /etc/bash_completion.d/kubectl"
+  # 直接重定向落盘(不走 run_command+tee: 补全脚本数百行, 经日志管道会全量灌进安装日志)
+  kubectl completion bash > /etc/bash_completion.d/kubectl
   enable_service kubelet
 }
 
