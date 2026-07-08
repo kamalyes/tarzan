@@ -15,7 +15,9 @@ nodeRegistration:
   criSocket: {{CRI_SOCKET_SOCK_FILE}}
   imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
   name: {{KUBE_NODE_NAME}}
-  taints: null
+  # 空数组显式去除 master 污点(null 等于用 kubeadm 默认值: 照打 NoSchedule 污点):
+  # 单 master 阶段 coredns/longhorn 等无容忍组件才能调度, master 同时承担存储节点(longhorn 副本落盘)
+  taints: []
 
 ---
 apiVersion: kubeadm.k8s.io/v1beta3

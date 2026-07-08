@@ -183,6 +183,34 @@ function destroy_cluster() {
     color_echo ${green} "集群已解散, 如需重建重新执行 install-kube.sh 即可"
 }
 
+# longhorn 默认副本数随集群节点数收敛(副本须落不同节点, 超过节点数调度不满会 Degraded; 生产标准上限 3)
+# 节点数不足 3 时取节点数(单 master=1 保证 PVC 可绑定), 只影响新建卷, 已有卷副本不变
+function sync_longhorn_replicas() {
+    # 未装 longhorn 时跳过(无 settings 资源)
+    kubectl -n longhorn-system get settings default-replica-count >/dev/null 2>&1 || return 0
+    local node_count replica_count current
+    # 节点注册即计入(不筛 Ready: 刚 join 的节点短暂 NotReady 属瞬态, 副本调度由 longhorn 在节点就绪后自行补齐)
+    node_count=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$node_count" -eq 0 ] || [ -z "$node_count" ]; then
+        return 0
+    fi
+    if [ "$node_count" -ge 3 ]; then
+        replica_count=3
+    else
+        replica_count=$node_count
+    fi
+    current=$(kubectl -n longhorn-system get settings default-replica-count -o jsonpath='{.value}' 2>/dev/null)
+    if [ "$current" = "$replica_count" ]; then
+        log "longhorn 默认副本数已是 $replica_count(当前节点数 $node_count), 无需调整"
+        return 0
+    fi
+    if kubectl -n longhorn-system patch settings default-replica-count -p "{\"value\":\"$replica_count\"}" --type=merge >/dev/null 2>&1; then
+        log "longhorn 默认副本数已按节点数收敛为 $replica_count(节点数 $node_count, 上限 3; 只影响新建卷, 已有卷不变)"
+    else
+        color_echo ${yellow} "longhorn 默认副本数调整失败(不影响节点加入, 可手动: kubectl -n longhorn-system patch settings default-replica-count -p '{\"value\":\"$replica_count\"}' --type=merge)"
+    fi
+}
+
 # 一键安装所有 slave: 免密自举后动态生成 join 凭据(kubeadm token), 批量分发安装
 function install_slaves() {
     ensure_passwordless
@@ -202,6 +230,8 @@ function install_slaves() {
     fi
     log "join 凭据已生成(master: $masterip)"
     for_each_machine slave_install "$package" "$masterip" "$token" "$hash"
+    # 节点加入完成后联动收敛 longhorn 默认副本数(可调度节点变多, 新建卷的副本冗余自动跟上; 未装 longhorn 时静默跳过)
+    sync_longhorn_replicas
 }
 
 function main_entrance() {
