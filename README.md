@@ -68,7 +68,57 @@ flowchart TD
 | AWS EC2      | IMDS 169.254.169.123（v1/v2）| 官方源 `vault.centos.org` / `pkgs.k8s.io` / `download.docker.com` |
 | 裸机 / 其他  | -                            | 默认公网镜像 `mirrors.aliyun.com`                  |
 
-> - 云上部署需在控制台**安全组放行**：6443（API Server）、2379/2380（etcd）、10250-10252（kubelet/scheduler/controller）、8472/UDP（flannel VXLAN）、30000-32767（NodePort）
+> - 云上部署需在控制台**安全组放行**，源填 VPC 内网网段或对端节点内网 IP。**表格里每个端口/端口段 = 一条安全组规则，逐行添加**：带 `-` 的连续区间（如 `9500-9505`）控制台里填一段即可，离散端口（如 longhorn 的 `3260` 与 `10000-10030` 是两回事）需分别添加多条规则：
+>
+>   **master 入站（控制面节点）**
+>
+>   | 端口        | 协议 | 用途                                                                   | 缺失症状                     |
+>   | ----------- | ---- | ---------------------------------------------------------------------- | ---------------------------- |
+>   | 22          | TCP  | ssh 运维                                                               | install-slaves 失败          |
+>   | 6443        | TCP  | API Server：slave join / kubelet 上报（源：各 slave 内网 IP）          | slave join 卡住              |
+>   | 30000-32767 | TCP  | NodePort 服务（对外访问走 master IP 时需要，按需）                     | NodePort 访问不通            |
+>
+>   **slave 入站（每台都要配）**
+>
+>   | 端口        | 协议 | 用途                                       | 缺失症状                |
+>   | ----------- | ---- | ------------------------------------------ | ----------------------- |
+>   | 22          | TCP  | ssh：master 分发安装包 / 远程执行          | install-slaves 失败     |
+>   | 10250       | TCP  | kubelet：apiserver 拉日志 / 执行命令       | kubectl logs 超时       |
+>
+>   **master 与每台 slave 都要配（集群互联，master 也跑 longhorn 存储组件）**
+>
+>   | 端口        | 协议 | 用途                                                        | 缺失症状                         |
+>   | ----------- | ---- | ----------------------------------------------------------- | -------------------------------- |
+>   | 8472        | UDP  | flannel VXLAN 跨节点 Pod 网络（calico 集群改放 179/TCP）    | 跨节点 Pod 不通 / 组件 CrashLoop |
+>   | 3260        | TCP  | longhorn iSCSI 挂卷入口                                     | Pod 挂卷卡 ContainerCreating     |
+>   | 9500-9505   | TCP  | longhorn manager 与 engine/replica 进程间通信               | 引擎起不来 / 卷 Degraded         |
+>   | 10000-10030 | TCP  | longhorn 副本数据同步端口（按卷动态分配占用）               | 副本同步失败 / 存储卷 Degraded   |
+>
+>   **对外暴露（按需，源 = 公网，配在承载入口流量的节点）**
+>
+>   | 端口        | 协议 | 用途                                                       | 缺失症状          |
+>   | ----------- | ---- | ---------------------------------------------------------- | ----------------- |
+>   | 80          | TCP  | traefik / ingress-nginx HTTP 入口（hostNetwork 直占节点）  | 域名打不开        |
+>   | 443         | TCP  | traefik / ingress-nginx HTTPS 入口                         | 域名打不开        |
+>   | 30000-32767 | TCP  | NodePort 服务段（任一节点 IP 都可访问）                    | 固定端口访问不通  |
+>
+>   **组件固定 NodePort 对照（均在上方 30000-32767 段内，放行该段即全部覆盖）**
+>
+>   | 端口      | 组件与用途                    |
+>   | --------- | ----------------------------- |
+>   | 30009     | dashboard 控制台              |
+>   | 30010     | clickhouse HTTP 协议          |
+>   | 30011     | clickhouse native 协议        |
+>   | 30012     | cockroachdb gRPC              |
+>   | 30013     | cockroachdb HTTP 管理         |
+>   | 30014     | valkey 默认实例               |
+>   | 30015     | valkey wallet 实例            |
+>   | 30016     | nats client                   |
+>   | 30017     | openobserve UI / API          |
+>   | 32080     | kube-state-metrics HTTP       |
+>   | 32081     | kube-state-metrics 抓取端口   |
+>
+>   其余组件（cert-manager / descheduler / metrics-server / otel 等）仅集群内部通信，走上方 Pod 网络，无需额外放行；单 master 的 etcd 2379/2380 与控制面 10251/10252 仅本机访问，无需放行。
 > - AWS 上建议安装命令携带 `--image-repository registry.k8s.io`（默认的阿里云容器镜像仓库海外拉取较慢）
 
 **确定服务器系统镜像&OS内核版本**
@@ -107,12 +157,12 @@ CentOS Linux release 7.9.209 (Core)
 #   -c 断点续传 + -t 0 断开自动重试, 防止大包下载中断导致 tar 解压报 unexpected EOF
 #   解压前可先校验完整性: gzip -t <包名>.tar.gz (无输出即完整)
 # CentOS 7 集群推荐离线包:
-[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-f42a3c8-centos7-offline-1.23.3.tar.gz
-[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-f42a3c8-centos7-offline-1.23.3.tar.gz
+[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-6604f9a-centos7-offline-1.23.3.tar.gz
+[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-6604f9a-centos7-offline-1.23.3.tar.gz
 [root@k8s-master opt]# cd tarzan-centos7-offline-1.23.3
 # CentOS 8 / Debian 集群使用通用在线包(解压后脚本自动识别本机系统分派):
-[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-f42a3c8-online.tar.gz
-[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-f42a3c8-online.tar.gz
+[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-6604f9a-online.tar.gz
+[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-6604f9a-online.tar.gz
 [root@k8s-master opt]# cd tarzan-online
 ```
 
