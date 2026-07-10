@@ -120,10 +120,22 @@ function install_valkey_cluster() {
     check_pod_status "$COMPONENT_NAMESPACE"
 }
 
+# MySQL 高可用(1主2从: pod-0 恒为可写主库, GTID 半同步复制; 从库首次 mysqldump 逻辑克隆对齐)
+function install_mysql() {
+    render_and_apply mysql mysql
+    check_pod_status "$COMPONENT_NAMESPACE"
+}
+
+# PostgreSQL 高可用(1主2从: pod-0 恒为可写主库, 流复制; 从库首次 pg_basebackup 物理克隆)
+function install_postgresql() {
+    render_and_apply postgresql postgresql
+    check_pod_status "$COMPONENT_NAMESPACE"
+}
+
 function main_entrance() {
     # 有状态组件的 PVC 依赖存储类(单组件与 all 统一前置检测, 缺失时提示先装 longhorn)
     case "${action}" in
-        clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|all)
+        clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|all)
             check_storage_class
             ;;
     esac
@@ -152,6 +164,12 @@ function main_entrance() {
         valkey-cluster)
             install_valkey_cluster
             ;;
+        mysql)
+            install_mysql
+            ;;
+        postgresql)
+            install_postgresql
+            ;;
         all)
             log "准备安装所有业务组件..."
             install_namespace
@@ -162,9 +180,11 @@ function main_entrance() {
             install_clickhouse
             install_nats
             install_cockroachdb
+            install_mysql
+            install_postgresql
             ;;
         *)
-            echo "Usage: $0 {namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|all}"
+            echo "Usage: $0 {namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|all}"
             exit 1
             ;;
     esac

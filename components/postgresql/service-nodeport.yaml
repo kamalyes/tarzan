@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-nodeport
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: postgresql
+spec:
+  # 外部连接入口: 只暴露可写主库(pod-0)
+  type: NodePort
+  selector:
+    statefulset.kubernetes.io/pod-name: postgresql-0
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+      nodePort: 30019

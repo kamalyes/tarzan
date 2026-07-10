@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: mysql
+spec:
+  # headless: 从库直连 DNS 按需取实例(读可用任意副本, 写必须走 mysql-primary)
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mysql
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-primary
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: mysql
+spec:
+  # 可写主库固定 pod-0(半同步复制保证提交已落从库, 主库故障由 StatefulSet 重调度恢复)
+  selector:
+    statefulset.kubernetes.io/pod-name: mysql-0
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql

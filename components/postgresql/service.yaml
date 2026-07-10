@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: postgresql
+spec:
+  # headless: 从库直连 DNS 按需取实例(读可用任意副本, 写必须走 postgresql-primary)
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgresql
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-primary
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: postgresql
+spec:
+  # 可写主库固定 pod-0(流复制保持从库跟随, 主库故障由 StatefulSet 重调度恢复)
+  selector:
+    statefulset.kubernetes.io/pod-name: postgresql-0
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg

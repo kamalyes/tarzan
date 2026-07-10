@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-nodeport
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: mysql
+spec:
+  # 外部连接入口: 只暴露可写主库(pod-0), 读写均经主库
+  type: NodePort
+  selector:
+    statefulset.kubernetes.io/pod-name: mysql-0
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+      nodePort: 30018

@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgresql-scripts
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: postgresql
+data:
+  # 主从统一入口: pod-0 恒为可写主库, 其余为从库(首次以 pg_basebackup 物理克隆 + 自动进入 standby)
+  entrypoint.sh: |
+    #!/bin/bash
+    set -e
+    master_host="postgresql-0.postgresql.${POD_NAMESPACE}.svc.cluster.local"
+    # 从库首次(数据目录空): 等主库就绪后物理克隆(-R 生成 standby.signal + primary_conninfo, 开机即 standby)
+    if [ "${HOSTNAME##*-}" != "0" ] && [ ! -s "${PGDATA}/PG_VERSION" ]; then
+        until pg_isready -h "${master_host}" -U postgres -q; do
+            echo "等待主库 ${master_host} 就绪..."
+            sleep 5
+        done
+        PGPASSWORD="${POSTGRESQL_REPL_PASSWORD}" pg_basebackup -h "${master_host}" -U repl -D "${PGDATA}" -R -X stream -P
+    fi
+    # 主库首次初始化执行 10-pg-init.sh; 从库数据目录已填充(克隆或重启), 官方入口检测到 PG_VERSION 直接启动
+    exec docker-entrypoint.sh postgres
+  # 仅主库首次初始化时执行(source 进官方入口 initdb 阶段, 本地 socket 免密)
+  10-pg-init.sh: |
+    #!/bin/bash
+    if [ "${HOSTNAME##*-}" != "0" ]; then exit 0; fi
+    # 复制专用角色(REPLICATION 权限, 独立于超级用户密码)
+    psql -U postgres -c "CREATE ROLE repl WITH REPLICATION LOGIN PASSWORD '${POSTGRESQL_REPL_PASSWORD}';"
+    # pg_hba 放行 pod 子网的流复制连接(官方镜像默认仅放行业务连接, 不含 replication 库)
+    echo "host replication repl {{KUBE_POD_SUBNET}} scram-sha-256" >> "${PGDATA}/pg_hba.conf"
+    # include 生产配置(append 在官方生成的 postgresql.conf 末尾, 后读覆盖默认值;
+    # 从库经 pg_basebackup 继承同一份 postgresql.conf, 挂载路径一致故同样生效)
+    echo "include = '/etc/postgresql-config/tuning.conf'" >> "${PGDATA}/postgresql.conf"
+  # 生产级服务端配置(按容器 2Gi 内存档位调优, include 注入不替换官方配置文件)
+  tuning.conf: |
+    # 连接
+    max_connections = 300
+    # 内存(容器 2Gi: shared_buffers 25%, effective_cache_size 按可用页缓存估计)
+    shared_buffers = 512MB
+    effective_cache_size = 1GB
+    work_mem = 4MB
+    maintenance_work_mem = 128MB
+    # WAL 与复制(显式声明复制形态, 不依赖默认值)
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 1GB
+    hot_standby = on
+    # checkpoint
+    checkpoint_timeout = 15min
+    max_wal_size = 1GB
+    min_wal_size = 256MB
+    # 慢查询与统计
+    logging_collector = on
+    log_min_duration_statement = 1000
+    log_checkpoints = on
+    log_timezone = 'Asia/Shanghai'
+    timezone = 'Asia/Shanghai'

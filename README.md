@@ -115,6 +115,8 @@ flowchart TD
 >   | 30015     | valkey wallet 实例            |
 >   | 30016     | nats client                   |
 >   | 30017     | openobserve UI / API          |
+>   | 30018     | mysql 可写主库(1主2从中 pod-0) |
+>   | 30019     | postgresql 可写主库(1主2从中 pod-0) |
 >   | 32080     | kube-state-metrics HTTP       |
 >   | 32081     | kube-state-metrics 抓取端口   |
 >
@@ -342,9 +344,9 @@ replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 # 业务组件
 
 ```bash
-# 全部安装(存储类检查 -> namespace -> secrets -> valkey x2 -> valkey-cluster -> clickhouse -> nats -> cockroachdb)
+# 全部安装(存储类检查 -> namespace -> secrets -> valkey x2 -> valkey-cluster -> clickhouse -> nats -> cockroachdb -> mysql -> postgresql)
 [root@k8s-master tarzan]# sh install-components.sh all
-# 单独安装: namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster
+# 单独安装: namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql
 [root@k8s-master tarzan]# sh install-components.sh secrets    # 按 conf/components.env.template 生成, 空值自动 openssl rand -hex 24, 幂等
 [root@k8s-master tarzan]# sh install-components.sh nats
 ```
@@ -353,6 +355,7 @@ replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 - 副本数、NATS 路由表、cockroachdb join 列表等动态量按 `variables.sh` 的副本数变量动态计算，不维护写死清单
 - cockroachdb 证书（CA/节点/client.root）安装时 openssl 动态生成，CA 私钥保留在 Master 本地不进集群
 - 镜像在安装时从渲染后的清单动态提取并 `crictl pull` 预拉取，脚本内不写死
+- **MySQL/PostgreSQL 高可用**（1主2从）：pod-0 恒为可写主库（`mysql-primary` / `postgresql-primary` Service 及 NodePort 30018/30019 固定指向），从库自动克隆建复制（MySQL: GTID 半同步 + mysqldump 对齐；PG: 流复制 + pg_basebackup），生产配置经 ConfigMap 注入（连接数/内存/慢查询/复制参数显式声明）；主库故障由 StatefulSet 自动重调度恢复（数据落 longhorn 卷），从库提升/降级命令见 `components/mysql|postgresql/configmap.yaml` 头部注释
 
 # 群控
 

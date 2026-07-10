@@ -153,6 +153,8 @@ CLICKHOUSE_VERSION="23.8.8.24"  # ClickHouse 版本
 COCKROACHDB_VERSION="v23.1.28"  # CockroachDB 版本
 NATS_VERSION="2.10.11"  # NATS 版本
 VALKEY_VERSION="7.2.5"  # Valkey 版本
+MYSQL_VERSION="8.0.36"  # MySQL 版本(GTID 复制, 1主2从)
+POSTGRESQL_VERSION="16.3"  # PostgreSQL 版本(流复制, 1主2从)
 
 # 业务镜像清单(默认官方源, 需私有仓库时改写为 <registry>/<name>:<version> 即可)
 CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:${CLICKHOUSE_VERSION}"
@@ -163,6 +165,8 @@ TRAEFIK_IMAGE="traefik:v${TRAEFIK_VERSION}"
 # OpenObserve 官方双源发布(ECR/Docker Hub 同 tag), 用 docker.io 源: ECR 国内不可达, docker.io 可走云厂商内网 mirror
 OPENOBSERVE_IMAGE="openobserve/openobserve:${OPENOBSERVE_VERSION}"
 OTEL_COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION}"
+MYSQL_IMAGE="mysql:${MYSQL_VERSION}"
+POSTGRESQL_IMAGE="postgres:${POSTGRESQL_VERSION}"
 
 # 业务组件安装信息(components 由 install-components.sh 动态生成, 不维护静态yaml)
 TARZAN_COMPONENTS_PATH="components"  # 业务组件清单动态生成路径
@@ -191,6 +195,8 @@ COCKROACHDB_REPLICAS=3
 NATS_REPLICAS=3
 VALKEY_REPLICAS=2
 VALKEY_CLUSTER_REPLICAS=6
+MYSQL_REPLICAS=3  # 1主2从(pod-0 恒为可写主库, GTID 半同步复制)
+POSTGRESQL_REPLICAS=3  # 1主2从(pod-0 恒为可写主库, 流复制)
 
 # CockroachDB 证书信息(节点证书 SAN 追加的外部域名与公网 IP, 请替换为实际值)
 COCKROACHDB_EXTERNAL_DOMAIN="cockroach.example.com"

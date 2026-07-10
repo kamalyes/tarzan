@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: mysql
+spec:
+  serviceName: mysql
+  replicas: {{MYSQL_REPLICAS}}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: {{MYSQL_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          command: ["/scripts/entrypoint.sh"]
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_REPL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: MYSQL_REPL_PASSWORD
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: mysql
+              containerPort: 3306
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+            - name: conf
+              mountPath: /etc/mysql/conf.d
+            - name: data
+              mountPath: /var/lib/mysql
+          # 就绪条件: 实例存活 + 角色标记(主库 primary-ready/从库 replica-ready, 从库克隆建复制期间不接流量)
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -uroot -p"$MYSQL_ROOT_PASSWORD" --silent && { [ -f /var/lib/mysql/primary-ready ] || [ -f /var/lib/mysql/replica-ready ]; }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -uroot -p"$MYSQL_ROOT_PASSWORD" --silent
+            initialDelaySeconds: 120
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 300m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        # items 精确映射: entrypoint 不能落入 initdb 目录(会被官方入口当初始化脚本执行)
+        - name: scripts
+          configMap:
+            name: mysql-scripts
+            defaultMode: 0755
+            items:
+              - key: entrypoint.sh
+                path: entrypoint.sh
+        - name: initdb
+          configMap:
+            name: mysql-scripts
+            defaultMode: 0755
+            items:
+              - key: 10-master-init.sh
+                path: 10-master-init.sh
+        - name: conf
+          configMap:
+            name: mysql-scripts
+            items:
+              - key: my.cnf
+                path: my.cnf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{LONGHORN_STORAGE_CLASS}}
+        resources:
+          requests:
+            storage: 30Gi

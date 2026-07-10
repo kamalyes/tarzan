@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-scripts
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: mysql
+data:
+  # 主从统一入口: pod-0 恒为可写主库, 其余为从库(首次以 mysqldump 逻辑克隆对齐主库后开启 GTID 复制)
+  entrypoint.sh: |
+    #!/bin/bash
+    set -e
+    ordinal=${HOSTNAME##*-}
+    # server_id 按 pod 序号唯一; GTID 复制基线参数主从都开
+    base_args="--server-id=$((100 + ordinal)) --gtid-mode=ON --enforce-gtid-consistency=ON"
+    master_host="mysql-0.mysql.${POD_NAMESPACE}.svc.cluster.local"
+
+    if [ "${ordinal}" = "0" ]; then
+        # 主库: 官方入口直接启动(首次初始化执行 10-master-init.sh 建复制账号)
+        touch /var/lib/mysql/primary-ready
+        exec docker-entrypoint.sh mysqld ${base_args}
+    fi
+
+    # 从库重启(数据目录已有): 复制关系持久化在 mysql 库, 直接启动
+    # (从库不写 binlog: 保持本地 gtid_executed 干净, 重放事务只落 relay log)
+    if [ -d /var/lib/mysql/mysql ]; then
+        exec docker-entrypoint.sh mysqld ${base_args} --skip-log-bin
+    fi
+
+    # 从库首次: 空壳初始化(--skip-log-bin 让本地初始化事务不产生 GTID, 主库 dump 的 gtid_purged 才能落地)
+    docker-entrypoint.sh mysqld ${base_args} --skip-log-bin &
+    init_pid=$!
+    until mysqladmin ping -uroot --silent 2>/dev/null; do sleep 3; done
+    # 等主库就绪(复制账号可登录 = initdb 已完成且正式服务已启动)
+    until mysql -h "${master_host}" -urepl -p"${MYSQL_REPL_PASSWORD}" -e 'SELECT 1' >/dev/null 2>&1; do
+        echo "等待主库 ${master_host} 就绪..."
+        sleep 5
+    done
+    # 逻辑克隆主库: --master-data 携带主库 gtid_purged(新集群数据量小, dump 秒级), --replace 覆盖本地系统表行
+    mysqldump --no-defaults -h "${master_host}" -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+        --all-databases --master-data=2 --single-transaction --replace > /tmp/seed.sql
+    mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" < /tmp/seed.sql
+    rm -f /tmp/seed.sql
+    # GTID 自动定位复制(auto_position 只回放缺失事务, 系统表/账号已随 dump 对齐)
+    mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "STOP REPLICA; \
+        CHANGE REPLICATION SOURCE TO SOURCE_HOST='${master_host}', SOURCE_PORT=3306, SOURCE_USER='repl', \
+        SOURCE_PASSWORD='${MYSQL_REPL_PASSWORD}', SOURCE_AUTO_POSITION=1; START REPLICA;"
+    # 就绪标记(readiness 探据据此判断从库可接流量, dump/建复制期间不就绪)
+    touch /var/lib/mysql/replica-ready
+    echo "从库初始化完成, 复制线程已启动"
+    wait ${init_pid}
+  # 仅主库首次初始化时执行(从库空壳初始化时序号非 0, 自行跳过)
+  10-master-init.sh: |
+    #!/bin/bash
+    if [ "${HOSTNAME##*-}" != "0" ]; then exit 0; fi
+    # initdb 阶段本地 socket root 无密码, 直接连临时实例建复制账号
+    mysql -uroot -e "CREATE USER IF NOT EXISTS 'repl'@'%' IDENTIFIED BY '${MYSQL_REPL_PASSWORD}'; \
+        GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'repl'@'%';"
+  # 生产级服务端配置(官方镜像 include /etc/mysql/conf.d): 按容器 2Gi 内存档位调优, 主从对称加载(利于人工提升切换)
+  my.cnf: |
+    [mysqld]
+    # 半同步复制: 主端提交等至少一个从库 ACK(10s 超时退化为异步保可用), 不丢已确认事务
+    plugin_load = "rpl_semi_sync_master=semisync_master.so;rpl_semi_sync_slave=semisync_slave.so"
+    rpl_semi_sync_master_enabled = ON
+    rpl_semi_sync_slave_enabled = ON
+    rpl_semi_sync_master_timeout = 10000
+    # 连接与会话
+    max_connections = 300
+    max_connect_errors = 100000
+    wait_timeout = 600
+    interactive_timeout = 600
+    net_read_timeout = 60
+    net_write_timeout = 60
+    max_allowed_packet = 64M
+    # 字符集
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_general_ci
+    # InnoDB(容器 2Gi 内存: buffer pool 50%, 双1 配合半同步保证落盘)
+    innodb_buffer_pool_size = 1G
+    innodb_log_file_size = 256M
+    innodb_flush_log_at_trx_commit = 1
+    sync_binlog = 1
+    innodb_flush_method = O_DIRECT
+    innodb_io_capacity = 1000
+    innodb_print_all_deadlocks = ON
+    # binlog 与复制(GTID 由启动参数下发)
+    binlog_format = ROW
+    binlog_row_image = FULL
+    max_binlog_size = 256M
+    binlog_expire_logs_seconds = 604800
+    relay_log_recovery = ON
+    # 慢查询与审计定位
+    slow_query_log = ON
+    long_query_time = 2
+    log_timestamps = SYSTEM

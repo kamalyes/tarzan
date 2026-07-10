@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: postgresql
+spec:
+  serviceName: postgresql
+  replicas: {{POSTGRESQL_REPLICAS}}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: {{POSTGRESQL_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          command: ["/scripts/entrypoint.sh"]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: POSTGRESQL_PASSWORD
+            - name: POSTGRESQL_REPL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: POSTGRESQL_REPL_PASSWORD
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # 数据目录用子目录: 卷根有 longhorn 的 lost+found, initdb 拒绝非空目录
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: pg
+              containerPort: 5432
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+            - name: conf
+              mountPath: /etc/postgresql-config
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 90
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 300m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+      volumes:
+        - name: scripts
+          configMap:
+            name: postgresql-scripts
+            defaultMode: 0755
+            items:
+              - key: entrypoint.sh
+                path: entrypoint.sh
+        - name: initdb
+          configMap:
+            name: postgresql-scripts
+            defaultMode: 0755
+            items:
+              - key: 10-pg-init.sh
+                path: 10-pg-init.sh
+        - name: conf
+          configMap:
+            name: postgresql-scripts
+            items:
+              - key: tuning.conf
+                path: tuning.conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{LONGHORN_STORAGE_CLASS}}
+        resources:
+          requests:
+            storage: 30Gi
