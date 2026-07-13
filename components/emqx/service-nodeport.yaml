@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: emqx-nodeport
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: emqx
+spec:
+  # MQTT 客户端接入与 Dashboard 管理入口
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: emqx
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: mqtt
+      nodePort: 30020
+    - name: dashboard
+      port: 18083
+      targetPort: dashboard
+      nodePort: 30021

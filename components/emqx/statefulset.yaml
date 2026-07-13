@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: emqx
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: emqx
+spec:
+  serviceName: emqx
+  replicas: {{EMQX_REPLICAS}}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: emqx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: emqx
+    spec:
+      containers:
+        - name: emqx
+          image: {{EMQX_IMAGE}}
+          imagePullPolicy: {{KUBE_IMAGE_PULL_POLICY}}
+          env:
+            # Dashboard 初始 admin 密码(默认 public 已知不安全, 首次登录后仍可自行修改)
+            - name: EMQX_DASHBOARD__DEFAULT_USERNAME__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{COMPONENT_SECRETS}}
+                  key: EMQX_DASHBOARD_PASSWORD
+          ports:
+            - name: mqtt
+              containerPort: 1883
+            - name: mqtts
+              containerPort: 8883
+            - name: ws
+              containerPort: 8083
+            - name: wss
+              containerPort: 8084
+            - name: dashboard
+              containerPort: 18083
+          volumeMounts:
+            - name: data
+              mountPath: /opt/emqx/data
+          readinessProbe:
+            httpGet:
+              path: /status
+              port: dashboard
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /status
+              port: dashboard
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      securityContext:
+        # emqx 官方镜像以 uid 1000 运行, PVC 落盘权限跟随
+        fsGroup: 1000
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: {{LONGHORN_STORAGE_CLASS}}
+        resources:
+          requests:
+            storage: 10Gi

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: emqx
+  namespace: {{COMPONENT_NAMESPACE}}
+  labels:
+    app.kubernetes.io/name: emqx
+spec:
+  selector:
+    app.kubernetes.io/name: emqx
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: mqtt
+    - name: mqtts
+      port: 8883
+      targetPort: mqtts
+    - name: ws
+      port: 8083
+      targetPort: ws
+    - name: wss
+      port: 8084
+      targetPort: wss
+    - name: dashboard
+      port: 18083
+      targetPort: dashboard

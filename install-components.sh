@@ -132,10 +132,22 @@ function install_postgresql() {
     check_pod_status "$COMPONENT_NAMESPACE"
 }
 
+# EMQX(MQTT Broker, 单实例)
+function install_emqx() {
+    render_and_apply emqx emqx
+    check_pod_status "$COMPONENT_NAMESPACE"
+}
+
+# Nexus(Maven 私服, 单实例)
+function install_nexus() {
+    render_and_apply nexus nexus
+    check_pod_status "$COMPONENT_NAMESPACE"
+}
+
 function main_entrance() {
     # 有状态组件的 PVC 依赖存储类(单组件与 all 统一前置检测, 缺失时提示先装 longhorn)
     case "${action}" in
-        clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|all)
+        clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|emqx|nexus|all)
             check_storage_class
             ;;
     esac
@@ -170,6 +182,12 @@ function main_entrance() {
         postgresql)
             install_postgresql
             ;;
+        emqx)
+            install_emqx
+            ;;
+        nexus)
+            install_nexus
+            ;;
         all)
             log "准备安装所有业务组件..."
             install_namespace
@@ -182,9 +200,11 @@ function main_entrance() {
             install_cockroachdb
             install_mysql
             install_postgresql
+            install_emqx
+            install_nexus
             ;;
         *)
-            echo "Usage: $0 {namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|all}"
+            echo "Usage: $0 {namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|emqx|nexus|all}"
             exit 1
             ;;
     esac

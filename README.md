@@ -117,6 +117,9 @@ flowchart TD
 >   | 30017     | openobserve UI / API          |
 >   | 30018     | mysql 可写主库(1主2从中 pod-0) |
 >   | 30019     | postgresql 可写主库(1主2从中 pod-0) |
+>   | 30020     | emqx MQTT(1883)               |
+>   | 30021     | emqx Dashboard(18083)         |
+>   | 30023     | nexus 私服 Web 控制台         |
 >   | 32080     | kube-state-metrics HTTP       |
 >   | 32081     | kube-state-metrics 抓取端口   |
 >
@@ -344,9 +347,9 @@ replicaset.apps/ndp-nginx-86dd798bf9   1         1         1         19s
 # 业务组件
 
 ```bash
-# 全部安装(存储类检查 -> namespace -> secrets -> valkey x2 -> valkey-cluster -> clickhouse -> nats -> cockroachdb -> mysql -> postgresql)
+# 全部安装(存储类检查 -> namespace -> secrets -> valkey x2 -> valkey-cluster -> clickhouse -> nats -> cockroachdb -> mysql -> postgresql -> emqx -> nexus)
 [root@k8s-master tarzan]# sh install-components.sh all
-# 单独安装: namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql
+# 单独安装: namespace|secrets|clickhouse|cockroachdb|nats|valkey|valkey-wallet|valkey-cluster|mysql|postgresql|emqx|nexus
 [root@k8s-master tarzan]# sh install-components.sh secrets    # 按 conf/components.env.template 生成, 空值自动 openssl rand -hex 24, 幂等
 [root@k8s-master tarzan]# sh install-components.sh nats
 ```

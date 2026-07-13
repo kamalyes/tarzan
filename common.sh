@@ -335,6 +335,8 @@ function replace_manifest_placeholders() {
         -e "s|{{VALKEY_IMAGE}}|$VALKEY_IMAGE|g" \
         -e "s|{{MYSQL_IMAGE}}|$MYSQL_IMAGE|g" \
         -e "s|{{POSTGRESQL_IMAGE}}|$POSTGRESQL_IMAGE|g" \
+        -e "s|{{EMQX_IMAGE}}|$EMQX_IMAGE|g" \
+        -e "s|{{NEXUS_IMAGE}}|$NEXUS_IMAGE|g" \
         -e "s|{{CLICKHOUSE_REPLICAS}}|$CLICKHOUSE_REPLICAS|g" \
         -e "s|{{COCKROACHDB_REPLICAS}}|$COCKROACHDB_REPLICAS|g" \
         -e "s|{{NATS_REPLICAS}}|$NATS_REPLICAS|g" \
@@ -343,6 +345,7 @@ function replace_manifest_placeholders() {
         -e "s|{{VALKEY_CLUSTER_SEQ_END}}|$((VALKEY_CLUSTER_REPLICAS - 1))|g" \
         -e "s|{{MYSQL_REPLICAS}}|$MYSQL_REPLICAS|g" \
         -e "s|{{POSTGRESQL_REPLICAS}}|$POSTGRESQL_REPLICAS|g" \
+        -e "s|{{EMQX_REPLICAS}}|$EMQX_REPLICAS|g" \
         -e "s|{{VALKEY_NAME}}|$VALKEY_NAME|g" \
         -e "s|{{VALKEY_PASSWORD_KEY}}|$VALKEY_PASSWORD_KEY|g" \
         -e "s|{{VALKEY_NODEPORT}}|$VALKEY_NODEPORT|g" \
