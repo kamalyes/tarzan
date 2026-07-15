@@ -348,6 +348,15 @@ while [[ $# -gt 0 ]]; do
         KUBE_JOIN_MODE=1
         echo "Joining the Kubernetes cluster"
         ;;
+        --node-ip)
+        if [[ -z "$2" ]]; then
+            color_echo ${red} "Error: --node-ip requires an argument"
+            exit 1
+        fi
+        KUBE_NODE_IP=$2
+        echo "kubelet register node-ip: $(color_title $green $KUBE_NODE_IP)"
+        shift
+        ;;
         --pack-slave)
         PACK_SLAVE_ONLY=1
         echo "Rebuild the slave install package only"
@@ -394,6 +403,7 @@ while [[ $# -gt 0 ]]; do
         echo "   --pod-subnet                                default=$KUBE_POD_SUBNET"
         echo "   --serviceSubnet                             default=$KUBE_SERVICE_SUBNET"
         echo "   --join                                      join the Kubernetes cluster"
+        echo "   --node-ip                                   node register IP (公网/异地组网时传清单公网 IP, 默认内网网卡 IP)"
         echo "   --pack-slave                                rebuild the slave install package only (for master already installed)"
         echo "   --masterip                                  master node IP address"
         echo "   --discovery-token-ca-cert-hash              discovery token CA cert hash"
@@ -436,9 +446,19 @@ main() {
     prepare_work
     load_images
     if [[ $IS_MASTER == 1 ]]; then
+        # 组网 IP 自适应: 清单里 master 行(第5列主机名匹配)的 IP 优先于本机内网 IP ——
+        # 异地机器不在同一 VPC, 内网互不可达, apiserver certSAN / etcd 监听 / 节点互联全部改按清单 IP(公网)走
+        listed_master_ip=$(awk -F: -v n="$KUBE_NODE_NAME" '{sub(/#.*/,"")} $5==n {print $2; exit}' "$TARGET_FILE" 2>/dev/null)
+        if [[ -n "$listed_master_ip" ]]; then
+            KUBE_ADVERTISE_ADDRESS=$listed_master_ip
+            echo "master advertise address from $TARGET_FILE: $(color_title $green $KUBE_ADVERTISE_ADDRESS)"
+        fi
+        register_node_ip "$KUBE_ADVERTISE_ADDRESS"
         init_master
     fi
     if [[ $KUBE_JOIN_MODE == 1 ]]; then
+        # slave 以清单 IP 注册(群控 join 自动携带 --node-ip; 异地组网不传则按内网注册, 节点互联会全部超时)
+        register_node_ip "$KUBE_NODE_IP"
         # kubectl 凭证(kubeconfig)不再由包内携带, join 完成后由群控统一分发
         run_command "kubeadm join $MASTER_IP --token $KUBE_TOKEN --discovery-token-ca-cert-hash $DISCOVERY_TOKEN_CA_CERT_HASH "
     fi

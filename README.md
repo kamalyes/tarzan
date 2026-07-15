@@ -124,6 +124,7 @@ flowchart TD
 >   | 32081     | kube-state-metrics 抓取端口   |
 >
 >   其余组件（cert-manager / descheduler / metrics-server / otel 等）仅集群内部通信，走上方 Pod 网络，无需额外放行；单 master 的 etcd 2379/2380 与控制面 10251/10252 仅本机访问，无需放行。
+> - **异地公网组网**（机器不在同一 VPC，`conf/ssh_hosts` 填公网 IP）：安装脚本自动改用清单 IP 注册节点（kubelet `--node-ip` + advertiseAddress，并绑定到 lo 通过 kubelet 校验），apiserver→kubelet 10250 / flannel VXLAN 8472 / longhorn 3260·9500-9505·10000-10030 全部按公网互通，上述安全组规则的**源一律填对端公网 IP**（每台机器对其它节点各放行一条）；`kubectl logs` 报 `dial tcp <内网IP>:10250 connection timed out` 即为未按此方式注册的典型症状。
 > - AWS 上建议安装命令携带 `--image-repository registry.k8s.io`（默认的阿里云容器镜像仓库海外拉取较慢）
 
 **确定服务器系统镜像&OS内核版本**

@@ -97,8 +97,10 @@ function slave_install() {
         color_echo ${yellow} "[$user@$host] conf/ssh_hosts 未配置 $host 的主机名(第5列), 以机器默认主机名加入集群(建议补充后重跑)"
         log "[$user@$host] 远程执行 install-kube.sh --join(默认主机名, 安装日志将流式回显)"
     fi
+    # --node-ip 传清单 IP: 异地公网组网(机器不在同一 VPC)时, kubelet/flannel/longhorn 按该 IP 互联,
+    # 内网注册(默认网卡 IP)会让 apiserver->kubelet 10250 / VXLAN 8472 / 副本同步全部超时
     timeout -k 5 $SSH_EXEC_TIMEOUT ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y $hname_args --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
+        "cd ~/$NODE_PACKAGE_PATH && /bin/bash install-kube.sh --join -y $hname_args --node-ip $host --masterip $masterip --token $token --discovery-token-ca-cert-hash $hash" || {
         color_echo ${red} "[$user@$host] slave 安装失败"
         return 1
     }

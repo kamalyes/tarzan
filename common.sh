@@ -467,6 +467,41 @@ function check_ingress_exclusive() {
     fi
 }
 
+# 节点以清单 IP(conf/ssh_hosts)注册进集群 —— 异地公网组网的核心:
+# kubelet --node-ip / kubeadm advertiseAddress 默认取内网网卡 IP, 跨机房机器内网互不可达,
+# apiserver->kubelet 10250 / flannel VXLAN 8472 / longhorn 副本同步全部按 node 注册 IP 互联, 内网注册则全部超时
+# 1) 绑清单 IP 到 lo: kubelet 对 --node-ip 做本机地址校验, 公网 EIP(NAT 映射)不在网卡上, 不绑会启动失败
+# 2) systemd oneshot 持久化: 机器重启后 lo 地址丢失, 不恢复 kubelet 起不来
+# 3) KUBELET_EXTRA_ARGS 下发 --node-ip: kubeadm 无此配置项, 只能经 kubelet 参数传递
+function register_node_ip() {
+    local node_ip=$1
+    if [ -z "$node_ip" ]; then
+        return 0
+    fi
+    # 前缀匹配避免 1.2.3.4 命中 1.2.3.40
+    if ! ip addr show | awk '{print $2}' | grep -q "^${node_ip}/"; then
+        run_command "ip addr add ${node_ip}/32 dev lo"
+    fi
+    cat > /etc/systemd/system/tarzan-nodeip.service <<EOF
+[Unit]
+Description=Tarzan bind listed node IP to loopback for kubelet node-ip
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ip addr add ${node_ip}/32 dev lo
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    run_command "systemctl daemon-reload && systemctl enable tarzan-nodeip.service"
+    # rpm 安装默认带空的 KUBELET_EXTRA_ARGS 行, 先删后写保证幂等
+    sed -i '/^KUBELET_EXTRA_ARGS=/d' /etc/sysconfig/kubelet
+    echo "KUBELET_EXTRA_ARGS=\"--node-ip=${node_ip}\"" >> /etc/sysconfig/kubelet
+    log "节点将以清单 IP ${node_ip} 注册(kubelet node-ip), 异地公网组网时安全组源请放行对端清单 IP"
+}
+
 # 定义下载函数
 function download_packages() {
     local folder="$1"
