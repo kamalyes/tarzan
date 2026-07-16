@@ -163,12 +163,12 @@ CentOS Linux release 7.9.209 (Core)
 #   -c 断点续传 + -t 0 断开自动重试, 防止大包下载中断导致 tar 解压报 unexpected EOF
 #   解压前可先校验完整性: gzip -t <包名>.tar.gz (无输出即完整)
 # CentOS 7 集群推荐离线包:
-[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-6604f9a-centos7-offline-1.23.3.tar.gz
-[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-6604f9a-centos7-offline-1.23.3.tar.gz
+[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-fec373f-centos7-offline-1.23.3.tar.gz
+[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-fec373f-centos7-offline-1.23.3.tar.gz
 [root@k8s-master opt]# cd tarzan-centos7-offline-1.23.3
 # CentOS 8 / Debian 集群使用通用在线包(解压后脚本自动识别本机系统分派):
-[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-6604f9a-online.tar.gz
-[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-6604f9a-online.tar.gz
+[root@k8s-master opt]# wget -c -t 0 --timeout=30 https://github.com/kamalyes/tarzan/releases/download/v0.0.2/tarzan-v0.0.2-fec373f-online.tar.gz
+[root@k8s-master opt]# tar -xzf tarzan-v0.0.2-fec373f-online.tar.gz
 [root@k8s-master opt]# cd tarzan-online
 ```
 
@@ -210,6 +210,8 @@ EOF'
 # Ingress Controller 可跟随 Master 初始化一起安装(与 CNI 组合使用, traefik/ingress-nginx 互斥二选一)
 [root@k8s-master tarzan]# sh install-kube.sh -y --flannel --traefik --hostname k8s-master
 [root@k8s-master tarzan]# sh install-kube.sh -y --calico --ingress-nginx --hostname k8s-master
+
+# 异地公网组网(机器不在同一 VPC): conf/ssh_hosts 各行直接填公网 IP, master 的 advertiseAddress 与 kubelet node-ip 自动按清单 IP 注册, 命令无需任何额外参数
 ```
 
 安装自动完成：系统初始化（内核参数/模块/chrony）→ containerd → `kubeadm init` → **自动安装所选 CNI** → **自动安装 longhorn 存储层**（业务组件/openobserve/traefik acme 的 PVC 依赖）→（可选）安装 Ingress → 打包 `kube_slave.tar.gz` 并打印 join 命令：
@@ -229,7 +231,7 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 [root@k8s-master tarzan]# ./group-control.sh install-slaves
 ```
 
-脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 分发前从 slave 侧预检 master API（6443）可达性，安全组问题提前暴露 → 逐台分发 `kube_slave.tar.gz`（优先 rsync 断点续传，中断重跑只补差量；传输有耗时回显，解压每 3 秒探测进度）→ 远程解压并执行 `install-kube.sh --join`（节点名取 `conf/ssh_hosts` 第5列的规划主机名，未配置时以机器默认主机名加入）→ 分发 kubectl 凭证到 node 的 `~/.kube/config`（加入后直接可在 node 上使用 kubectl）
+脚本自动完成：免密自举（首次执行自动生成密钥并分发公钥，之后不再使用密码）→ 动态生成 join 凭据（`kubeadm token create`，不复用旧 token）→ 分发前从 slave 侧预检 master API（6443）可达性，安全组问题提前暴露 → 逐台分发 `kube_slave.tar.gz`（优先 rsync 断点续传，中断重跑只补差量；传输有耗时回显，解压每 3 秒探测进度）→ 远程解压并执行 `install-kube.sh --join`（节点名取 `conf/ssh_hosts` 第5列的规划主机名，未配置时以机器默认主机名加入，并自动携带 `--node-ip` 按清单 IP 注册节点，异地公网组网时 ssh_hosts 填公网 IP 即可全程公网互联）→ 分发 kubectl 凭证到 node 的 `~/.kube/config`（加入后直接可在 node 上使用 kubectl）
 
 注意：`install-slaves` 会**自动跳过**清单里的 master 与已加入集群的节点（机器文件与集群节点记录双重判断），清单无需注释已装机器；机器有安装残留但集群无节点记录（节点被删或加入中断）时会明确提示先执行 `remove-slave` 清理，不会被误判为已加入；某台安装失败会明确报错且不影响其余机器继续安装，全部装完后整体退出码非 0；`kube_slave.tar.gz` 被清理后可先执行 `sh install-kube.sh --pack-slave` 补包（master 已就绪时不重跑安装流程）
 
@@ -244,6 +246,9 @@ kubeadm join 10.0.0.3:6443 --token 0dy3rl.33bugu3rax35r815 --discovery-token-ca-
 
 # 3. 外网 slave 需在安装时追加 -addr <node-external-ip> --create-virtualeth
 [root@k8s-node1 tarzan]# sh install-kube.sh -y --join -addr 114.132.233.16 --create-virtualeth --masterip 115.233.233.15:6443 --token xxx --discovery-token-ca-cert-hash xxxx
+
+# 4. 异地公网组网(不在同一 VPC)改为追加 --node-ip <本机公网IP>, 节点按公网 IP 注册互联(群控方式自动携带, 无需手动)
+[root@k8s-node1 tarzan]# sh install-kube.sh -y --join --node-ip 114.132.233.16 --masterip 115.233.233.15:6443 --token xxx --discovery-token-ca-cert-hash xxxx
 ```
 
 slave 安装包不携带 master 的 admin.conf（敏感凭证不随包流转），手工方式加入后如需在 node 上使用 kubectl，将 master 的 `/etc/kubernetes/admin.conf` 拷贝到该机 `~/.kube/config`（权限 600）即可；群控方式（方式一）安装完成后自动分发，无需手动操作
@@ -429,6 +434,7 @@ Options:
    --pod-subnet                                default=172.22.0.0/16
    --serviceSubnet                             default=10.96.0.0/12
    --join                                      join the Kubernetes cluster
+   --node-ip                                   node register IP (公网/异地组网时传清单公网 IP, 默认内网网卡 IP)
    --pack-slave                                rebuild the slave install package only (for master already installed)
    --masterip                                  master node IP address
    --discovery-token-ca-cert-hash              discovery token CA cert hash
