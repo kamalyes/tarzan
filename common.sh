@@ -745,7 +745,7 @@ function batch_exec() {
 
 # 远程分发文件: 优先 rsync(断点续传, 中断后重跑只补传差量), 任一端未装 rsync 时降级 scp
 # 注1: 最小化安装的 CentOS/Debian 默认无 rsync, 不能假设目标机可用
-# 注2: rsync --info=progress2 与 scp 自带进度条在脚本非交互输出下均不实时刷新(只在结束汇总一行), 统一用并行监控远端已传字节保障过程可见
+# 注2: rsync --info=progress2 与 scp 自带进度条在脚本非交互输出下均不实时刷新(只在结束汇总一行), 统一用并行监控保障过程可见(rsync 解析本地 progress2 日志, scp 查询远端已传字节)
 function remote_copy() {
     local user=$1 host=$2 port=$3 local_file=$4 remote_path=$5
     # 先探测通道: 两端都有 rsync 走断点续传, 否则降级 scp
@@ -754,21 +754,38 @@ function remote_copy() {
         && timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" "command -v rsync" >/dev/null 2>&1; then
         use_rsync=1
     fi
-    # 并行监控: rsync/scp 传输中远端写 .文件名.随机后缀 的临时文件, 周期回显已传字节与百分比
+    # 并行监控回显已传字节与百分比:
+    # - rsync 分支: progress2 输出落本地临时日志, 监控周期解析末行 —— 零额外链路开销
+    #   (公网链路被传输本身打满时, 为监控单开的新建 SSH 握手排队, 15s 超时后进度行后半段整段静默)
+    # - scp 分支: 无可用进度输出, 保留周期 SSH 查询远端 .文件名.随机后缀 临时文件字节数
     local local_size=$(stat -c %s "$local_file" 2>/dev/null || echo 0)
     local remote_dir remote_base
     case "$remote_path" in
         */) remote_dir="${remote_path%/}"; remote_base=$(basename "$local_file") ;;
         *)  remote_dir=$(dirname "$remote_path"); remote_base=$(basename "$remote_path") ;;
     esac
+    local rsync_log=""
+    if [[ "$use_rsync" == 1 ]]; then
+        rsync_log=$(mktemp /tmp/tarzan-copy-progress.XXXXXX)
+    fi
     (
         while true; do
             sleep 15
-            # set -e 下命令替换失败会杀掉本监控子 shell, 必须兜底; 临时文件查不到时查正式名(传完 rename 的瞬间)
-            sent=$(timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
-                "stat -c %s $remote_dir/.$remote_base* 2>/dev/null || stat -c %s $remote_dir/$remote_base 2>/dev/null" 2>/dev/null | head -1 || true)
+            sent=""
+            pct=""
+            if [ -n "$rsync_log" ]; then
+                # progress2 非交互输出形如 "  22,577,152   5%    1.37MB/s    0:04:31", 过滤出末条进度行(排除收尾汇总行)解析字节与百分比
+                line=$(grep -E '^[[:space:]]*[0-9][0-9,]*[[:space:]]+[0-9]+%' "$rsync_log" 2>/dev/null | tail -1 || true)
+                sent=$(echo "$line" | sed -n 's/^[[:space:]]*\([0-9][0-9,]*\).*/\1/p' | tr -d ',' || true)
+                pct=$(echo "$line" | sed -n 's/^[[:space:]]*[0-9][0-9,]*[[:space:]][[:space:]]*\([0-9][0-9]*\)%.*/\1/p' || true)
+            else
+                # set -e 下命令替换失败会杀掉本监控子 shell, 必须兜底; 临时文件查不到时查正式名(传完 rename 的瞬间)
+                sent=$(timeout -k 5 15 ssh $SSH_OPTS $SSH_ALIVE_OPTS -p "$port" "$user@$host" \
+                    "stat -c %s $remote_dir/.$remote_base* 2>/dev/null || stat -c %s $remote_dir/$remote_base 2>/dev/null" 2>/dev/null | head -1 || true)
+            fi
             if [ -n "$sent" ] && [ "$local_size" -gt 0 ]; then
-                echo "  [$user@$host] 传输进度: $((sent/1024/1024))MB/$((local_size/1024/1024))MB ($((sent*100/local_size))%)"
+                [ -z "$pct" ] && pct=$((sent*100/local_size))
+                echo "  [$user@$host] 传输进度: $((sent/1024/1024))MB/$((local_size/1024/1024))MB (${pct}%)"
             fi
         done
     ) &
@@ -777,14 +794,15 @@ function remote_copy() {
     # 后台异步进程按 POSIX 忽略 SIGINT, 必须由 trap 显式强杀
     if [[ "$use_rsync" == 1 ]]; then
         # --timeout=60: IO 空闲 60s 自动断开(链路僵死时自杀, 不用等外层 600s)
+        # 输出落监控日志(含错误信息): 成功时静默, 失败时收尾回放尾部诊断
         rsync --partial --info=progress2 --timeout=60 \
-            -e "ssh $SSH_OPTS $SSH_ALIVE_OPTS -p $port" "$local_file" "$user@$host:$remote_path" &
+            -e "ssh $SSH_OPTS $SSH_ALIVE_OPTS -p $port" "$local_file" "$user@$host:$remote_path" > "$rsync_log" 2>&1 &
     else
         scp $SSH_OPTS $SSH_ALIVE_OPTS -P "$port" "$local_file" "$user@$host:$remote_path" &
     fi
     local copy_pid=$!
-    # ^C 即时响应: 强杀传输与监控进程后退出
-    trap "kill -9 $copy_pid $monitor_pid 2>/dev/null; exit 130" INT
+    # ^C 即时响应: 强杀传输与监控进程, 清理临时进度日志后退出
+    trap "kill -9 $copy_pid $monitor_pid 2>/dev/null; rm -f $rsync_log 2>/dev/null; exit 130" INT
     local deadline=$(( $(date +%s) + SSH_COPY_TIMEOUT ))
     local copy_rc=0
     while kill -0 $copy_pid 2>/dev/null; do
@@ -804,6 +822,13 @@ function remote_copy() {
     trap - INT
     disown $monitor_pid 2>/dev/null || true
     kill -9 $monitor_pid 2>/dev/null || true
+    # rsync 输出已重定向进进度日志, 失败时回放尾部诊断(成功时静默), 用毕清理临时日志
+    if [ -n "$rsync_log" ]; then
+        if [ "$copy_rc" -ne 0 ]; then
+            tail -5 "$rsync_log" 2>/dev/null || true
+        fi
+        rm -f "$rsync_log"
+    fi
     return $copy_rc
 }
 
