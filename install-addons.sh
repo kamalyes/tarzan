@@ -112,11 +112,13 @@ function longhorn() {
     # kubectl 无法识别(对齐 traefik/otel 的 "CRD 先行等待注册" 模式)
     LONGHORN_VERSION="$version" install_rendered "longhorn-v${version}" \
         "$TARZAN_ADDONS_PATH/.rendered-longhorn.yaml" \
-        "$dir/$version/install.yaml"
-    run_command "kubectl wait --for=condition=Established crd/settings.longhorn.io --timeout=120s"
-    install_rendered "longhorn-settings" \
-        "$TARZAN_ADDONS_PATH/.rendered-longhorn-settings.yaml" \
-        "$dir/settings.yaml"
+        "$dir/$version/install.yaml" "$dir/settings.yaml"
+    # 等待 Longhorn CRD 在 API Server 完成注册(Setting 等 CRD 资源依赖其 Established)
+    until kubectl get crd settings.longhorn.io &>/dev/null; do
+        log "等待 settings.longhorn.io CRD 注册..."
+        sleep 2
+    done
+    # 宿主机依赖(open-iscsi/nfs-utils 等)已在 yum-packages.sh 的 longhorn-deps 统一安装, 此处仅展示与就绪检测
     kubectl get all -n longhorn-system
     check_pod_status longhorn-system
 }

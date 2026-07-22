@@ -29,6 +29,152 @@ generate_ssh_key() {
     fi
 }
 
+# 检查网络连接和 SSH 服务
+check_target() {
+    local TARGET=$1
+    local PORT=$2
+    log "正在检查 $TARGET ..."
+
+    if ping -c 1 "${TARGET#*@}" &> /dev/null; then
+        log "网络连接正常。"
+        if timeout 5 ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$PORT" "$TARGET" "exit" &> /dev/null; then
+            log "SSH 服务已安装并正常运行。"
+        else
+            color_echo ${red} "SSH 服务未运行或无法访问 $TARGET。"
+        fi
+    else
+        color_echo ${red} "无法访问 $TARGET, 网络连接失败。"
+    fi
+}
+
+# 复制公钥到目标机器
+copy_ssh_key() {
+    local TARGET=$1
+    local PORT=$2
+    local PASSWORD=$3
+    log "正在将公钥复制到 $TARGET ..."
+
+    if timeout 30 sshpass -p "$PASSWORD" ssh-copy-id -o StrictHostKeyChecking=no -p "$PORT" "$TARGET"; then
+        log "公钥成功复制到 $TARGET。"
+    else
+        color_echo ${red} "复制公钥到 $TARGET 失败,请检查连接和凭据。"
+        return 1  # 添加返回值以指示失败
+    fi
+}
+
+# 处理目标机器的 SSH 设置
+setup_ssh_for_targets() {
+    local CUSTOM_PORT=$1
+    local CUSTOM_PASSWORD=$2
+
+    for TARGET in "${TARGET_MACHINES[@]}"; do
+        # user:host:pass[:port[:hostname]] —— 第 5 段主机名仅作备注
+        IFS=':' read -r USER HOST PASSWORD PORT HOSTNAME_ALIAS <<< "$TARGET"
+
+        # 使用自定义端口和密码，或配置文件中的值
+        PORT=${CUSTOM_PORT:-${PORT:-$DEFAULT_SSH_PORT}}
+        PASSWORD=${CUSTOM_PASSWORD:-${PASSWORD:-$DEFAULT_SSH_PASSWORD}}
+
+        USER_HOST="${USER}@${HOST}"
+
+        # Debug output
+        debug_info "$USER" "$HOST" "$PASSWORD" "$PORT"
+
+        if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt $SSH_MAX_PORT ]; then
+            color_echo ${red} "无效的端口号: $PORT。请检查配置文件中的端口。"
+            continue
+        fi
+
+        if ! copy_ssh_key "$USER_HOST" "$PORT" "$PASSWORD"; then
+            continue  # 如果复制公钥失败，跳过此目标
+        fi
+
+        check_target "$USER_HOST" "$PORT"
+    done
+}
+
+# 复制文件到目标机器
+copy_file_to_machines() {
+    local FILE=$1
+    local TARGET_PATH=$2
+    local CUSTOM_PORT=$3
+    local CUSTOM_PASSWORD=$4
+
+    for TARGET in "${TARGET_MACHINES[@]}"; do
+        copy_file_to_machine "$FILE" "$TARGET" "$TARGET_PATH" "$CUSTOM_PORT" "$CUSTOM_PASSWORD"
+    done
+}
+
+# 复制文件到单个目标机器
+copy_file_to_machine() {
+    local FILE=$1
+    local TARGET=$2
+    local TARGET_PATH=$3
+    local CUSTOM_PORT=$4
+    local CUSTOM_PASSWORD=$5
+
+    # 从目标机器中提取用户、主机、密码、端口
+    IFS=':' read -r USER HOST PASSWORD PORT HOSTNAME_ALIAS <<< "$TARGET"
+
+    # 使用命令行参数覆盖配置文件中的端口和密码
+    PORT=${CUSTOM_PORT:-${PORT:-$DEFAULT_PORT}}
+    PASSWORD=${CUSTOM_PASSWORD:-${PASSWORD:-$DEFAULT_PASSWORD}}
+
+    USER_HOST="${USER}@${HOST}"
+
+    # Debug output
+    debug_info "$USER" "$HOST" "$PASSWORD" "$PORT"
+
+    # 确保文件存在
+    if [ ! -f "$FILE" ]; then
+        color_echo ${red} "文件 $FILE 不存在,无法复制到 $USER_HOST。"
+        return
+    fi
+
+    log "正在将文件 $FILE 复制到 $USER_HOST ..."
+    if timeout $SSH_COPY_TIMEOUT sshpass -p "$PASSWORD" scp -o BatchMode=yes -o ConnectTimeout=5 -P "$PORT" "$FILE" "$USER_HOST:$TARGET_PATH" ; then
+        log "文件 $FILE 成功复制到 $USER_HOST。"
+    else
+        color_echo ${red} "无法将文件 $FILE 复制到 $USER_HOST,请检查连接和凭据。"
+    fi
+}
+
+# 在目标机器上执行远程命令
+execute_remote_command() {
+    local TARGET=$1
+    local COMMAND=$2
+    local PORT=$3
+    local PASSWORD=$4
+
+    # 从目标机器中提取用户、主机
+    IFS=':' read -r USER HOST <<< "$TARGET"
+
+    # 使用命令行参数覆盖配置文件中的端口和密码
+    PORT=${PORT:-$DEFAULT_SSH_PORT}
+    PASSWORD=${PASSWORD:-$DEFAULT_SSH_PASSWORD}
+
+    USER_HOST="${USER}@${HOST}"
+
+    # Debug output
+    debug_info "$USER" "$HOST" "$PASSWORD" "$PORT"
+    
+    # 使用 sshpass 执行远程命令
+    if timeout $SSH_EXEC_TIMEOUT sshpass -p "$PASSWORD" ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$PORT" "$USER_HOST" "$COMMAND"; then
+        log "命令 '$COMMAND' 在 $USER_HOST 执行成功。"
+    else
+        color_echo ${red} "无法在 $USER_HOST 执行命令 '$COMMAND'，请检查连接和凭据。"
+    fi
+}
+
+# 打印调试信息
+debug_info() {
+    local USER=$1
+    local HOST=$2
+    local PASSWORD=$3
+    local PORT=$4
+    echo "调试信息: USER=$USER, HOST=$HOST, PASSWORD=$PASSWORD, PORT=$PORT"
+}
+
 # 主程序入口
 main_entrance() {
     case "${action}" in

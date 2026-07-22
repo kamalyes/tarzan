@@ -6,6 +6,74 @@ source ./common.sh
 
 action=$1
 
+# 遍历目标机器执行回调, 回调参数: user host password port ...
+# 单台失败不中断其余机器, 全部处理完后聚合返回失败状态
+function for_each_machine() {
+    local exec_fn=$1
+    shift
+    local line user host password port hostname failed=0
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        # user:host:pass[:port[:hostname]] —— 第 5 段主机名仅作备注, 兼容带主机名的清单
+        IFS=':' read -r user host password port hostname <<< "$line"
+        port=${port:-$DEFAULT_SSH_PORT}
+        hostname=${hostname:-}
+        if ! "$exec_fn" "$user" "$host" "$password" "$port" "$@"; then
+            failed=1
+        fi
+    done < "$TARGET_FILE"
+    return $failed
+}
+
+function batch_exec() {
+    local user=$1 host=$2 password=$3 port=$4
+    local command="$5"
+    log "[$user@$host] 执行: $command"
+    if timeout $SSH_EXEC_TIMEOUT sshpass -p "$password" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$host" "$command"; then
+        log "[$user@$host] 执行成功"
+    else
+        color_echo ${red} "[$user@$host] 执行失败"
+        return 1
+    fi
+}
+
+function batch_copy() {
+    local user=$1 host=$2 password=$3 port=$4
+    local local_file=$5 remote_path=$6
+    if [ ! -f "$local_file" ]; then
+        color_echo ${red} "本地文件 $local_file 不存在"
+        return 1
+    fi
+    log "[$user@$host] 分发: $local_file -> $remote_path"
+    if timeout $SSH_COPY_TIMEOUT sshpass -p "$password" scp -o StrictHostKeyChecking=no -P "$port" "$local_file" "$user@$host:$remote_path"; then
+        log "[$user@$host] 分发成功"
+    else
+        color_echo ${red} "[$user@$host] 分发失败"
+        return 1
+    fi
+}
+
+# 批量执行命令
+function run_command_on_machines() {
+    local command="$1"
+    if [ -z "$command" ]; then
+        color_echo ${red} "请提供要执行的命令"
+        exit 1
+    fi
+    for_each_machine batch_exec "$command"
+}
+
+# 批量分发文件
+function copy_file_to_machines() {
+    local local_file=$1
+    local remote_path=${2:-$DEFAULT_SSH_TARGET_PATH}
+    if [ -z "$local_file" ]; then
+        color_echo ${red} "请提供要分发的本地文件"
+        exit 1
+    fi
+    for_each_machine batch_copy "$local_file" "$remote_path"
+}
+
 # 单台 slave 安装(分发安装包 + 远程解压执行 join)
 function slave_install() {
     local user=$1 host=$2 password=$3 port=$4

@@ -30,6 +30,8 @@ function download_all_packages() {
   yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/docker docker-ce docker-ce-cli docker-compose
   yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/conntrack  conntrack
   yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/containerd crictl containerd.io
+  # Longhorn 存储所需的宿主机依赖(manager/csi 启动探活必需; 离线集群缺装会导致 manager"不允许在节点上初始化"或探活失败→ CrashLoopBackOff)
+  yum -y install --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/longhorn-deps open-iscsi nfs-utils e2fsprogs dmsetup cryptsetup device-mapper-persistent-data jq
   yum -y install --disableexcludes=kubernetes --nogpgcheck --downloadonly --downloaddir=$TARZAN_OFFLINE_PATH/k8s kubelet kubeadm kubectl
   log "Download Yum Rpm 依赖包下载完成"
 }
@@ -124,6 +126,7 @@ function online_download_dependency() {
       "docker"
       "docker-before"
       "docker-compose"
+      "longhorn-deps"
       "k8s/$KUBE_VERSION"
   )
 
@@ -198,6 +201,10 @@ function online_download_dependency() {
         b12353b679d428c5f36937a7071a68eb82a0abadd6ab03a2a3435e73b05acfda-kubelet-1.23.3-0.$ARCHITECTURE.rpm
   fi
   
+  # 下载 Longhorn 存储宿主机依赖(open-iscsi 等;  用 yum 现网缓存索取精确版本,  避免硬编码版本号失真)
+  mkdir -p "$TARZAN_OFFLINE_PATH/longhorn-deps"
+  yum -y install --downloadonly --downloaddir="$TARZAN_OFFLINE_PATH/longhorn-deps" open-iscsi nfs-utils e2fsprogs cryptsetup device-mapper-persistent-data 2>/dev/null || true
+
   log "所有包已下载完成！"
 }
 
@@ -270,9 +277,13 @@ EOF
 function online_install_base() {
   log "在线安装基础依赖"
   if [[ "$OS_FAMILY" == "debian" ]]; then
-    pkg_online_install ipset ipvsadm conntrack socat chrony sshpass wget tree curl jq vim net-tools unzip telnet iputils-ping bash-completion iptables
+    pkg_online_install ipset ipvsadm conntrack socat chrony sshpass wget tree curl jq vim net-tools unzip telnet iputils-ping bash-completion iptables开
+    # Longhorn 存储宿主机依赖(Debian 家族包名不同)
+    pkg_online_install open-iscsi nfs-common
   else
     pkg_online_install ipset ipvsadm conntrack-tools socat chrony sshpass wget tree curl jq vim net-tools unzip telnet iputils bash-completion iptables-nft
+    # Longhorn 存储宿主机依赖(rhel 家族)
+    pkg_online_install open-iscsi nfs-utils
   fi
 }
 
@@ -328,6 +339,13 @@ function offline_install_public_dependency() {
 
   offline_install_conntrack
   log "Conntrack installed successfully."
+
+  # Longhorn 存储宿主机依赖(open-iscsi/nfs-utils 等),  目录存在时安装, 不存在则跳过(非 Longhorn 场景)
+  if [ -d "$TARZAN_OFFLINE_PATH/longhorn-deps" ] && ls "$TARZAN_OFFLINE_PATH/longhorn-deps"/*.rpm &>/dev/null; then
+    yum_install_template "$TARZAN_OFFLINE_PATH/longhorn-deps" "longhorn-deps"
+    systemctl enable --now iscsid 2>/dev/null || true
+    systemctl enable --now iscsi 2>/dev/null || true
+  fi
 
   offline_install_cni_plugins
   log "CNI installed successfully."

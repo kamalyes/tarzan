@@ -420,11 +420,22 @@ function append_render_source() {
 }
 
 # 从清单动态提取镜像并预拉取(镜像来自渲染后的清单, 不在脚本内写死)
+# 注意: 部分组件(如 Longhorn) 的 CSI 镜像只在 env 的 CSI_*_IMAGE 中, 不在 image: 字段;
+# 这里除 image: 字段外, 一并提取 env 中的 *_IMAGE 值(仅镜像形态的 http/docker.io 条目), 离线节点才能拉全
 function pull_manifest_images() {
     local file=$1
-    local image
+    local image src
+    # ① 标准 image:  字段的镜像
     for image in $(grep -E '^[[:space:]]+image:[[:space:]]' "$file" | awk '{print $2}' | tr -d '"' | sort -u); do
         run_command "crictl pull '$image'"
+    done
+    # ② env 中 *_IMAGE 变量的 value(CSI 组件等,  取其相邻 value  行,  仅取至少含一个 / 的镜像条目)
+
+    for image in $(grep -E '^[[:space:]]+- name: [A-Z0-9_]+_IMAGE$' "$file" | sed 's/.*name: //' | tr -d '[:space:]'); do
+        src=$(grep -A 2 -E "^[[:space:]]*- name: ${image}$" "$file" | grep -E '^[[:space:]]+value:[[:space:]]"' | sed 's/.*value:[[:space:]]*//; s/^"//; s/"$//')
+        if [ -n "$src" ] && [[ "$src" =~ / ]]; then
+            run_command "crictl pull '$src'"
+        fi
     done
 }
 

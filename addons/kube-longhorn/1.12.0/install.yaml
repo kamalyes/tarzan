@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: kube-system
+  name: longhorn-system
 ---
 # Source: longhorn/templates/priorityclass.yaml
 apiVersion: scheduling.k8s.io/v1
@@ -24,7 +24,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: longhorn-service-account
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -35,7 +35,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: longhorn-ui-service-account
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: longhorn-support-bundle
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -57,7 +57,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: longhorn-default-resource
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -70,7 +70,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: longhorn-default-setting
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -85,7 +85,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: longhorn-storageclass
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -4561,7 +4561,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: longhorn-service-account
-  namespace: kube-system
+  namespace: longhorn-system
 ---
 # Source: longhorn/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4579,14 +4579,14 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: longhorn-support-bundle
-  namespace: kube-system
+  namespace: longhorn-system
 ---
 # Source: longhorn/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: longhorn
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -4619,7 +4619,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: longhorn
-  namespace: kube-system
+  namespace: longhorn-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -4627,7 +4627,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: longhorn-service-account
-  namespace: kube-system
+  namespace: longhorn-system
 ---
 # Source: longhorn/templates/daemonset-sa.yaml
 apiVersion: v1
@@ -4639,7 +4639,7 @@ metadata:
     app.kubernetes.io/version: v{{LONGHORN_VERSION}}
     app: longhorn-manager
   name: longhorn-backend
-  namespace: kube-system
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4659,7 +4659,7 @@ metadata:
     app.kubernetes.io/version: v{{LONGHORN_VERSION}}
     app: longhorn-ui
   name: longhorn-frontend
-  namespace: kube-system
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4680,7 +4680,7 @@ metadata:
     app.kubernetes.io/version: v{{LONGHORN_VERSION}}
     app: longhorn-admission-webhook
   name: longhorn-admission-webhook
-  namespace: kube-system
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4700,7 +4700,7 @@ metadata:
     app.kubernetes.io/version: v{{LONGHORN_VERSION}}
     app: longhorn-recovery-backend
   name: longhorn-recovery-backend
-  namespace: kube-system
+  namespace: longhorn-system
 spec:
   type: ClusterIP
   selector:
@@ -4720,7 +4720,7 @@ metadata:
     app.kubernetes.io/version: v{{LONGHORN_VERSION}}
     app: longhorn-manager
   name: longhorn-manager
-  namespace: kube-system
+  namespace: longhorn-system
 spec:
   selector:
     matchLabels:
@@ -4842,7 +4842,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: longhorn-driver-deployer
-  namespace: kube-system
+  namespace: longhorn-system
   labels:
     app.kubernetes.io/name: longhorn
     app.kubernetes.io/instance: longhorn
@@ -4917,7 +4917,7 @@ metadata:
     app.kubernetes.io/version: v{{LONGHORN_VERSION}}
     app: longhorn-ui
   name: longhorn-ui
-  namespace: kube-system
+  namespace: longhorn-system
 spec:
   replicas: 2
   selector:
